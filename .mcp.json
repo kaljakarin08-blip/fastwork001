@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "law-content-v2": {
+      "url": "http://localhost:3099/mcp"
+    }
+  }
+}

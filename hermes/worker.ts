@@ -1,0 +1,752 @@
+import dotenv from 'dotenv'
+// Next.js stores keys in .env.local — load it before .env so it takes precedence
+dotenv.config({ path: '.env.local' })
+dotenv.config()
+import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
+import fs from 'fs'
+import path from 'path'
+
+const APP_URL = process.env.HERMES_APP_URL ?? 'http://localhost:3000'
+const INTERVAL = parseInt(process.env.HERMES_POLL_INTERVAL_SECONDS ?? '45') * 1000
+
+interface BrandContext {
+  firmName: string
+  tagline: string
+  tone: string
+  targetAudience: string
+  primaryColor: string
+  secondaryColor: string
+  phone: string
+  email: string
+  lineId: string
+  websiteUrl: string
+  systemPrompt: string
+  model: string
+  anthropicKey: string
+  openaiKey: string
+}
+
+async function loadBrandContext(): Promise<BrandContext> {
+  const defaults: BrandContext = {
+    firmName: 'สำนักงานกฎหมาย',
+    tagline: '',
+    tone: 'professional',
+    targetAudience: 'เจ้าของธุรกิจและประชาชนทั่วไป',
+    primaryColor: '#1e3a5f',
+    secondaryColor: '#d4a853',
+    phone: '',
+    email: '',
+    lineId: '',
+    websiteUrl: '',
+    systemPrompt: '',
+    model: 'gpt-4o',
+    anthropicKey: '',
+    openaiKey: '',
+  }
+  try {
+    const [brandRes, settingsRes] = await Promise.all([
+      fetch(`${APP_URL}/api/local/brand-profile`).catch(() => null),
+      fetch(`${APP_URL}/api/local/app-settings`).catch(() => null),
+    ])
+    const brand = brandRes?.ok ? await brandRes.json() : {}
+    const settings = settingsRes?.ok ? await settingsRes.json() : {}
+    // hermes_model overrides openai_model when set
+    const model = settings.hermes_model || settings.openai_model || defaults.model
+    return {
+      firmName: brand.firm_name || defaults.firmName,
+      tagline: brand.tagline || '',
+      tone: brand.default_tone || defaults.tone,
+      targetAudience: brand.default_target_audience || defaults.targetAudience,
+      primaryColor: brand.primary_color || defaults.primaryColor,
+      secondaryColor: brand.secondary_color || defaults.secondaryColor,
+      phone: brand.phone || '',
+      email: brand.email || '',
+      lineId: brand.line_id || '',
+      websiteUrl: brand.website_url || '',
+      systemPrompt: settings.hermes_system_prompt || '',
+      model,
+      anthropicKey: settings.anthropic_api_key || process.env.ANTHROPIC_API_KEY || '',
+      openaiKey: settings.openai_api_key || process.env.OPENAI_API_KEY || '',
+    }
+  } catch {
+    return defaults
+  }
+}
+
+// ─── Multi-provider LLM abstraction ────────────────────────────────────────
+
+type MsgImageContent =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+async function callLLM(opts: {
+  model: string
+  system: string
+  user: string | MsgImageContent[]
+  openaiKey: string
+  anthropicKey: string
+}): Promise<string> {
+  const { model, system, user, openaiKey, anthropicKey } = opts
+
+  // ── Anthropic (Claude) ──────────────────────────────────────────────────
+  if (model.startsWith('claude-')) {
+    const client = new Anthropic({ apiKey: anthropicKey })
+
+    let userContent: Anthropic.MessageParam['content']
+    if (typeof user === 'string') {
+      userContent = user
+    } else {
+      // Map OpenAI multimodal format → Anthropic format
+      userContent = user.map(c => {
+        if (c.type === 'text') return { type: 'text' as const, text: c.text }
+        return {
+          type: 'image' as const,
+          source: { type: 'url' as const, url: c.image_url.url },
+        }
+      })
+    }
+
+    const res = await client.messages.create({
+      model,
+      max_tokens: 4096,
+      system,
+      messages: [{ role: 'user', content: userContent }],
+    })
+
+    const block = res.content[0]
+    return block.type === 'text' ? block.text : '{}'
+  }
+
+  // ── OpenAI (gpt-4o, gpt-4.1, o3, o4-mini, …) ──────────────────────────
+  const openai = new OpenAI({ apiKey: openaiKey })
+  const isOSeries = /^o\d/.test(model) // o3, o4-mini, o4-mini-high, etc.
+
+  const params: Parameters<typeof openai.chat.completions.create>[0] = {
+    model,
+    messages: [
+      { role: 'system', content: system },
+      {
+        role: 'user',
+        content: typeof user === 'string'
+          ? user
+          : (user as OpenAI.Chat.ChatCompletionContentPart[]),
+      },
+    ],
+    response_format: { type: 'json_object' },
+  }
+  if (!isOSeries) (params as Record<string, unknown>).temperature = 0.7
+
+  const res = await openai.chat.completions.create(params)
+  return res.choices[0]?.message?.content ?? '{}'
+}
+
+// ─── DALL-E 3 image generation ─────────────────────────────────────────────
+
+async function generateImage(prompt: string, openaiKey: string, layout = 'square_1x1'): Promise<string | null> {
+  const sizeMap: Record<string, '1024x1024' | '1792x1024' | '1024x1792'> = {
+    square_1x1: '1024x1024',
+    landscape_16x9: '1792x1024',
+    portrait_4x5: '1024x1792',
+    story_9x16: '1024x1792',
+  }
+  const size = sizeMap[layout] ?? '1024x1024'
+
+  const openai = new OpenAI({ apiKey: openaiKey })
+  const res = await openai.images.generate({
+    model: 'dall-e-3',
+    prompt: prompt.slice(0, 4000),
+    n: 1,
+    size,
+    quality: 'standard',
+  })
+
+  // Use URL if b64_json not returned (API version difference)
+  const imageUrl = res.data[0]?.url
+  if (!imageUrl) return null
+
+  // Download image and save to public/generated/
+  const imgRes = await fetch(imageUrl)
+  const arrayBuf = await imgRes.arrayBuffer()
+  const b64 = Buffer.from(arrayBuf).toString('base64')
+
+  // Save to public/generated/ so Next.js can serve it
+  const outDir = path.join(process.cwd(), 'public', 'generated')
+  fs.mkdirSync(outDir, { recursive: true })
+  const filename = `img_${Date.now()}.png`
+  fs.writeFileSync(path.join(outDir, filename), Buffer.from(b64, 'base64'))
+  return `/generated/${filename}`
+}
+
+// ─── Auto-schedule helper ──────────────────────────────────────────────────
+
+async function autoSchedule(reqId: string, facebookAccountId: string) {
+  await fetch(`${APP_URL}/api/local/calendar/schedule`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requirement_id: reqId,
+      facebook_account_id: facebookAccountId,
+      auto_random: true,
+      skip_days: 0,
+      weekday_only: true,
+      time_start: 9,
+      time_end: 18,
+    }),
+  }).catch(() => null)
+}
+
+async function updateJobStatus(jobId: string, status: string, error?: string) {
+  await fetch(`${APP_URL}/api/local/hermes/jobs/${jobId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, error_message: error }),
+  }).catch(() => null)
+}
+
+async function updateReqStatus(reqId: string, status: string) {
+  await fetch(`${APP_URL}/api/local/requirements/${reqId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  }).catch(() => null)
+}
+
+async function processJob(job: Record<string, unknown>, requirement: Record<string, unknown>) {
+  const jobId = job.id as string
+  const reqId = requirement.id as string
+  const brand = await loadBrandContext()
+  const openaiKey = brand.openaiKey
+  const llm = (system: string, user: string | MsgImageContent[]) =>
+    callLLM({ model: brand.model, system, user, openaiKey, anthropicKey: brand.anthropicKey })
+
+  await updateJobStatus(jobId, 'running')
+
+  try {
+    // Step 1: Auto-topic from RAG if topic is empty
+    if (!requirement.topic) {
+      const categoryLine = String(requirement.brief ?? '').match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
+      if (!categoryLine) {
+        await updateJobStatus(jobId, 'failed', 'Missing topic — กรุณาใส่ Topic หรือเลือกหมวดหมู่กฎหมาย')
+        await updateReqStatus(reqId, 'failed')
+        return
+      }
+      await updateReqStatus(reqId, 'rag_searching')
+      const autoRes = await fetch(`${APP_URL}/api/local/rag/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: categoryLine, limit: 10 }),
+      }).catch(() => null)
+      const autoNotes: Array<{ title: string; score: number }> = autoRes?.ok ? await autoRes.json() : []
+      if (!autoNotes.length) {
+        await updateJobStatus(jobId, 'failed', 'Auto-topic: ไม่พบข้อมูลใน RAG vault สำหรับหมวดหมู่นี้ — รัน pnpm rag:index หลังเพิ่มข้อมูลใน Obsidian')
+        await updateReqStatus(reqId, 'needs_research')
+        return
+      }
+      requirement.topic = autoNotes[0].title
+      await fetch(`${APP_URL}/api/local/requirements/${reqId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: requirement.topic }),
+      }).catch(() => null)
+      console.log(`[hermes] Auto-topic: "${requirement.topic}"`)
+    }
+
+    // Step 2: Topic Guard — reject if not law/content related
+    const guardRaw = await llm(
+      `คุณเป็น gatekeeper ระบบ AI Content สำหรับสำนักงานกฎหมาย
+หน้าที่: ตรวจสอบว่า topic ที่ส่งมาเกี่ยวกับ (1) กฎหมายไทย หรือ (2) การสร้าง legal content เท่านั้น
+ตอบกลับเป็น JSON เท่านั้น: { "ok": true/false, "reason": "..." }
+- ok: true → topic เกี่ยวกับกฎหมายหรือ legal content → ผ่าน
+- ok: false → topic นอกเรื่อง เช่น การทำอาหาร ท่องเที่ยว เทคโนโลยีทั่วไป ฯลฯ → reject`,
+      `Topic: ${requirement.topic}\nBrief: ${String(requirement.brief ?? '').slice(0, 300)}`
+    ).catch(() => '{"ok":true,"reason":"guard_error"}')
+
+    let guardResult: { ok: boolean; reason?: string } = { ok: true }
+    try { guardResult = JSON.parse(guardRaw) } catch { /* pass */ }
+
+    if (!guardResult.ok) {
+      await updateJobStatus(jobId, 'failed', `off_topic: ${guardResult.reason ?? 'ไม่เกี่ยวกับกฎหมาย'}`)
+      await updateReqStatus(reqId, 'failed')
+      console.log(`[hermes] 🚫 Rejected off-topic: "${requirement.topic}" — ${guardResult.reason}`)
+      return
+    }
+
+    // Step 3: RAG Search
+    await updateReqStatus(reqId, 'rag_searching')
+    const ragRes = await fetch(`${APP_URL}/api/local/rag/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: requirement.topic, limit: 5 }),
+    }).catch(() => null)
+
+    let sources: Array<{ path: string; title: string; content: string; score: number }> = []
+    if (ragRes?.ok) {
+      sources = await ragRes.json()
+    }
+
+    const ragContext = sources.map(s => s.content).join('\n\n---\n\n')
+    if (sources.length === 0) {
+      console.log(`[hermes] RAG: ไม่พบข้อมูลใน vault — generate โดยไม่มี RAG context`)
+    }
+
+    // Step 4: Generate Content
+    await updateReqStatus(reqId, 'content_generating')
+    const contentSystemPrompt = brand.systemPrompt ||
+      `คุณเป็น content writer ประจำ${brand.firmName} ผู้เชี่ยวชาญกฎหมายไทย
+หน้าที่: เขียน Facebook post เกี่ยวกับกฎหมายไทยเท่านั้น อ้างอิงจาก RAG Sources ที่ให้มา
+กฎเหล็ก: ห้ามสร้าง content นอกเรื่องกฎหมาย ถ้า topic ไม่เกี่ยวกับกฎหมายให้ตอบ { "error": "off_topic" }
+ตอบกลับเป็น JSON ตามรูปแบบที่กำหนด ไม่อ้างกฎหมายแน่นอนเกินจริง`
+    const contentRaw = await llm(contentSystemPrompt, buildContentPrompt(requirement, ragContext, brand))
+    const content = JSON.parse(contentRaw)
+    if (content.error === 'off_topic') {
+      await updateJobStatus(jobId, 'failed', 'off_topic: LLM ปฏิเสธ — topic ไม่เกี่ยวกับกฎหมาย')
+      await updateReqStatus(reqId, 'failed')
+      console.log(`[hermes] 🚫 LLM rejected off-topic: "${requirement.topic}"`)
+      return
+    }
+
+    // Step 5: Generate Image Prompt
+    await updateReqStatus(reqId, 'image_prompt_generating')
+    let creativeProfile: Record<string, unknown> | null = null
+    if (requirement.creative_profile_id) {
+      const profileRes = await fetch(`${APP_URL}/api/local/creative-profiles/${requirement.creative_profile_id}`).catch(() => null)
+      if (profileRes?.ok) creativeProfile = await profileRes.json()
+    }
+    const refImages: string[] = creativeProfile?.reference_image_urls
+      ? JSON.parse(String(creativeProfile.reference_image_urls)).filter((u: unknown) => typeof u === 'string' && u.startsWith('http'))
+      : []
+
+    const imgUserContent: MsgImageContent[] = [{ type: 'text', text: buildImagePromptPrompt(requirement, content, creativeProfile) }]
+    for (const url of refImages.slice(0, 3)) {
+      imgUserContent.push({ type: 'image_url', image_url: { url } })
+    }
+    if (refImages.length > 0) {
+      imgUserContent.push({ type: 'text', text: 'รูปด้านบนคือ reference images จาก Creative Profile — วิเคราะห์ color palette, lighting, composition, photography style แล้วสะท้อนใน main_prompt และ dalle_prompt' })
+    }
+
+    const imageSystemPrompt = brand.systemPrompt
+      ? `${brand.systemPrompt}\n\nคุณสร้าง image prompt สำหรับ Facebook post ของ${brand.firmName} ตอบกลับเป็น JSON`
+      : `คุณสร้าง image prompt สำหรับ Facebook post ของ${brand.firmName} ตอบกลับเป็น JSON`
+    const imgUser = refImages.length > 0
+      ? imgUserContent
+      : buildImagePromptPrompt(requirement, content, creativeProfile, brand)
+    const imagePromptRaw = await llm(imageSystemPrompt, imgUser)
+    const imagePrompt = JSON.parse(imagePromptRaw)
+
+    // Step 5: Video Brief (optional)
+    let videoPrompt: Record<string, unknown> | undefined
+    if (requirement.video_create === 1) {
+      await updateReqStatus(reqId, 'video_prompt_generating')
+      const videoSystemPrompt = brand.systemPrompt
+        ? `${brand.systemPrompt}\n\nคุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
+        : `คุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
+      const videoRaw = await llm(videoSystemPrompt, buildVideoPromptPrompt(requirement, content))
+      videoPrompt = JSON.parse(videoRaw)
+    }
+
+    // Step 5.5: Generate actual image via DALL-E 3 (if not text-only layout)
+    let generatedImageUrl: string | null = null
+    const layout = String(requirement.layout_requirement ?? 'square_1x1')
+    if (layout !== 'text_only' && imagePrompt.dalle_prompt) {
+      await updateReqStatus(reqId, 'image_generating')
+      try {
+        generatedImageUrl = await generateImage(String(imagePrompt.dalle_prompt), openaiKey, layout)
+        console.log(`[hermes] Image: ${generatedImageUrl}`)
+      } catch (imgErr) {
+        // Image generation failure is non-fatal — continue without image
+        console.warn(`[hermes] Image generation skipped: ${imgErr instanceof Error ? imgErr.message : imgErr}`)
+      }
+    }
+
+    // Step 6: Save Output
+    const ragSources = sources.map((s, i) => ({
+      note_path: s.path ?? '',
+      note_title: s.title ?? '',
+      chunk_id: String(i),
+      relevance_score: s.score ?? 0.5,
+    }))
+
+    await fetch(`${APP_URL}/api/local/hermes/requirements/${reqId}/output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content, image_prompt: imagePrompt, video_prompt: videoPrompt,
+        rag_sources: ragSources,
+        generated_image_url: generatedImageUrl,
+      }),
+    })
+
+    await updateJobStatus(jobId, 'done')
+    console.log(`[hermes] ✅ Done: ${reqId}`)
+
+    // Step 7: Auto-schedule if facebook_account_id is set
+    if (requirement.facebook_account_id) {
+      await autoSchedule(reqId, String(requirement.facebook_account_id))
+      console.log(`[hermes] Auto-scheduled: ${reqId}`)
+    }
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await updateJobStatus(jobId, 'failed', msg)
+    await updateReqStatus(reqId, 'failed')
+    console.error(`[hermes] ❌ Failed: ${reqId}`, msg)
+  }
+}
+
+/* ─── Layout → canvas size mapping ─────────────────────── */
+
+const LAYOUT_CANVAS: Record<string, string> = {
+  square_1x1: '1080x1080, aspect ratio 1:1',
+  portrait_4x5: '1080x1350, aspect ratio 4:5',
+  landscape_16x9: '1200x675, aspect ratio 16:9',
+  story_9x16: '1080x1920, aspect ratio 9:16',
+  vertical_4x3: '1080x810, aspect ratio 4:3',
+  text_only: 'text-only, no image needed',
+}
+
+const LAYOUT_MIDJOURNEY_AR: Record<string, string> = {
+  square_1x1: '--ar 1:1',
+  portrait_4x5: '--ar 4:5',
+  landscape_16x9: '--ar 16:9',
+  story_9x16: '--ar 9:16',
+  vertical_4x3: '--ar 4:3',
+  text_only: '--ar 1:1',
+}
+
+/* ─── Law category → visual context ────────────────────── */
+
+const LAW_VISUAL_CONTEXT: Record<string, string> = {
+  corporate: 'modern Thai corporate office, business registration documents, professional suits, clean workspace',
+  tax: 'tax forms, calculator, financial ledgers, accountant desk, organized paperwork, numbers and charts',
+  property: 'Thai real estate, property documents, land title deed, modern condominium, house keys',
+  labor: 'workplace, employees, employment contract signing, professional Thai office environment',
+  contract: 'legal contract documents, signing ceremony, handshake, formal agreement papers',
+  criminal: 'Thai courthouse exterior, gavel, scales of justice, legal books, serious formal setting',
+  family: 'family silhouette, inheritance documents, will and testament, family law office',
+  ip: 'intellectual property, copyright symbol, creative work, patent documents, innovation',
+  litigation: 'courtroom, legal files stacked, lawyer briefcase, formal Thai legal setting',
+  finance: 'stock charts, financial documents, Thai baht currency, securities trading, banking',
+  immigration: 'passport, visa documents, Thai flag, government office, international travel',
+  environment: 'environmental permit documents, green space, urban planning map, construction site',
+}
+
+/* ─── Tone → visual mood ────────────────────────────────── */
+
+const TONE_VISUAL_MOOD: Record<string, string> = {
+  professional: 'clean minimalist, cool blue-white palette, sharp focus, corporate lighting',
+  friendly: 'warm soft lighting, approachable composition, slightly desaturated warm tones',
+  educational: 'infographic-style clarity, clean backgrounds, instructional visual hierarchy',
+  authoritative: 'dramatic lighting, strong contrast, dark navy and gold accents, commanding composition',
+  conversational: 'candid natural lighting, relaxed composition, lifestyle photography feel',
+  urgent: 'high contrast, bold red-orange accents, dynamic angle, immediate visual impact',
+  storytelling: 'cinematic framing, narrative depth, environmental storytelling, warm golden hour',
+  inspirational: 'aspirational composition, upward perspective, bright hopeful lighting',
+  empowering: 'strong confident subject, empowering pose, vibrant accent colors',
+  alert: 'warning visual cues, high contrast yellow-red, attention-grabbing composition',
+}
+
+/* ─── Prompt builders ───────────────────────────────────── */
+
+function buildContentPrompt(req: Record<string, unknown>, ragContext: string, brand?: BrandContext) {
+  const brief = String(req.brief ?? '')
+
+  const lawCategoryLine = brief.match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
+  const goalsLine = brief.match(/เป้าหมาย: (.+)/)?.[1] ?? ''
+  const keyMessageLine = brief.match(/Key message: (.+)/)?.[1] ?? ''
+  const ctaLine = brief.match(/CTA: (.+)/)?.[1] ?? ''
+  const doNotLine = brief.match(/Do NOT mention: (.+)/)?.[1] ?? ''
+  const wordCountMatch = brief.match(/ความยาวเนื้อหา: (\d+) คำ/)
+  const targetWordCount = wordCountMatch ? parseInt(wordCountMatch[1]) : null
+  const blueprintMatch = brief.match(/Content Blueprint:\n([\s\S]+?)(?:\n\n|$)/)
+  const blueprintText = blueprintMatch?.[1] ?? ''
+  const referencesMatch = brief.match(/References:\n([\s\S]+?)(?:\n\n|$)/)
+  const referencesText = referencesMatch?.[1] ?? ''
+
+  const isCarousel = req.content_type === 'carousel'
+  const isReel = req.content_type === 'reel_script' || req.content_type === 'short_video'
+
+  let formatInstructions = ''
+  if (isCarousel) {
+    formatInstructions = `
+Content Type: Carousel — สร้าง body เป็น array ของ slides (4-7 slides) แต่ละ slide มี headline + 1-2 บรรทัด
+"body": "Slide 1: [headline] — [text]\nSlide 2: [headline] — [text]\n..."`
+  } else if (isReel) {
+    formatInstructions = `
+Content Type: Reel/Short Video — สร้าง body เป็น script โครงสร้างสั้น เน้น hook แรก 3 วินาที`
+  }
+
+  const brandBlock = brand ? `
+═══ BRAND IDENTITY ═══
+สำนักงาน: ${brand.firmName}${brand.tagline ? ` — ${brand.tagline}` : ''}
+Default Tone: ${brand.tone}
+Default Target Audience: ${brand.targetAudience}
+${brand.websiteUrl ? `Website: ${brand.websiteUrl}` : ''}
+${brand.phone ? `โทร: ${brand.phone}` : ''}
+${brand.email ? `Email: ${brand.email}` : ''}
+${brand.lineId ? `LINE: ${brand.lineId}` : ''}
+Brand Colors: Primary ${brand.primaryColor} / Secondary ${brand.secondaryColor}
+` : ''
+
+  return `คุณเป็น content writer ผู้เชี่ยวชาญกฎหมายไทย เขียน Facebook post ที่ถูกต้องทางกฎหมาย เข้าใจง่าย และ engage ผู้อ่าน
+${brandBlock}
+═══ BRIEF ═══
+Topic: ${req.topic}
+${lawCategoryLine ? `หมวดหมู่กฎหมาย: ${lawCategoryLine}` : ''}
+${goalsLine ? `เป้าหมาย: ${goalsLine}` : ''}
+${keyMessageLine ? `Key Message: ${keyMessageLine}` : ''}
+${ctaLine ? `CTA ที่ต้องการ: ${ctaLine}` : ''}
+Target Audience: ${req.target_audience ?? 'เจ้าของธุรกิจและประชาชนทั่วไป'}
+Tone: ${req.tone ?? 'professional'}
+Objective: ${req.objective ?? 'ให้ความรู้'}
+${targetWordCount ? `ความยาวเนื้อหา body: อย่างน้อย ${targetWordCount} คำ — body ต้องมีความยาวถึงเกณฑ์นี้ ห้ามสั้นกว่า` : 'ความยาวเนื้อหา body: อย่างน้อย 800 คำ'}
+${doNotLine ? `ห้ามพูดถึง: ${doNotLine}` : ''}
+
+${blueprintText ? `═══ BLUEPRINT ═══\n${blueprintText}` : ''}
+${referencesText ? `═══ REFERENCES ═══\n${referencesText}` : ''}
+
+═══ RAG SOURCES ═══
+${ragContext}
+${formatInstructions}
+
+ตอบกลับเป็น JSON เท่านั้น:
+{
+  "title": "ชื่อ post ที่คนจำได้",
+  "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน (ห้ามเริ่มด้วย 'สวัสดี' หรือชื่อบริษัท)",
+  "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
+  "body": "เนื้อหาหลัก — ต้องมีความยาวตามที่กำหนด เขียนเป็น bullet points หรือ structured text ที่ละเอียด ครบถ้วน ตาม content type",
+  "cta": "call to action ชัดเจน 1 ประโยค",
+  "hashtags": "#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5",
+  "compliance_note": "ถ้ามีประเด็น legal risk ให้ระบุ (หรือ null)"
+}`
+}
+
+function buildImagePromptPrompt(req: Record<string, unknown>, content: Record<string, unknown>, profile: Record<string, unknown> | null = null, brand?: BrandContext) {
+  const layout = String(req.layout_requirement ?? 'square_1x1')
+  const canvas = LAYOUT_CANVAS[layout] ?? '1080x1080, aspect ratio 1:1'
+  const mjAR = LAYOUT_MIDJOURNEY_AR[layout] ?? '--ar 1:1'
+
+  const brief = String(req.brief ?? '')
+  const lawCategoryLine = brief.match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
+  const firstCategory = lawCategoryLine.split(',')[0]?.trim().toLowerCase() ?? ''
+
+  const categoryMap: Record<string, string> = {
+    'กฎหมายบริษัท': 'corporate', 'ภาษีและบัญชี': 'tax', 'อสังหาริมทรัพย์': 'property',
+    'แรงงาน': 'labor', 'สัญญา': 'contract', 'อาญา': 'criminal',
+    'ครอบครัว/มรดก': 'family', 'ทรัพย์สินทางปัญญา': 'ip', 'คดีความ/ฟ้องร้อง': 'litigation',
+    'การเงิน/หลักทรัพย์': 'finance', 'วีซ่า/คนเข้าเมือง': 'immigration', 'สิ่งแวดล้อม/ผังเมือง': 'environment',
+  }
+  const categoryKey = categoryMap[firstCategory] ?? 'corporate'
+  const visualContext = LAW_VISUAL_CONTEXT[categoryKey] ?? LAW_VISUAL_CONTEXT.corporate
+
+  const tones = String(req.tone ?? 'professional').split(',').map(t => t.trim())
+  const primaryTone = tones[0] ?? 'professional'
+  const visualMood = TONE_VISUAL_MOOD[primaryTone] ?? TONE_VISUAL_MOOD.professional
+
+  // Brand baseline (used when no creative profile)
+  const brandSection = brand && !profile ? `
+═══ BRAND COLORS ═══
+Primary: ${brand.primaryColor} / Secondary: ${brand.secondaryColor}
+สำนักงาน: ${brand.firmName}
+` : ''
+
+  // Creative Profile overrides
+  const profileSection = profile ? `
+═══ CREATIVE PROFILE: ${profile.name} ═══
+${profile.color_scheme ? `Brand Colors: ${profile.color_scheme}` : ''}
+${profile.photography_style ? `Photography Style: ${profile.photography_style}` : ''}
+${profile.visual_mood ? `Visual Mood: ${profile.visual_mood}` : ''}
+${profile.logo_usage ? `Logo Usage: ${profile.logo_usage}` : ''}
+${profile.do_not_use ? `Do NOT use: ${profile.do_not_use}` : ''}
+${profile.notes ? `Additional Notes: ${profile.notes}` : ''}
+⚠️ Creative Profile นี้มีความสำคัญสูงสุด — ต้อง follow ทุก guideline ข้างต้น` : ''
+
+  const isTextOnly = layout === 'text_only'
+
+  if (isTextOnly) {
+    return `สร้าง text-overlay design brief สำหรับ Facebook post (ไม่มีภาพ — ใช้ typography/color เท่านั้น)
+
+Topic: ${req.topic}
+Content Title: ${content.title ?? ''}
+Tone: ${req.tone ?? 'professional'}
+
+ตอบกลับเป็น JSON:
+{
+  "main_prompt": "Typography-based design: describe background color, font style, layout arrangement for text-only post",
+  "text_overlay": "ข้อความหลักที่แสดงบนโพส (2-3 บรรทัด ภาษาไทย)",
+  "negative_prompt": "avoid: cluttered text, low contrast, hard-to-read fonts",
+  "layout_spec": "Text-only layout description with color palette and spacing",
+  "canvas_size": "${canvas}",
+  "brand_style": "Color scheme and typography style for Thai law firm"
+}`
+  }
+
+  return `คุณเป็น expert image prompt engineer สำหรับ AI image generation (DALL-E 3, Midjourney, Adobe Firefly)
+สร้าง image prompt ที่ละเอียด copy-paste ready สำหรับ Facebook post ของสำนักงานกฎหมายไทย
+
+═══ CONTEXT ═══
+Topic: ${req.topic}
+Content Title: ${String(content.title ?? '')}
+Content Hook: ${String(content.hook ?? '')}
+Law Category: ${lawCategoryLine || 'Corporate/General Law'}
+Image Direction จากลูกค้า: ${String(req.image_direction ?? '(ไม่ระบุ)')}
+Tone: ${req.tone ?? 'professional'}
+Layout: ${canvas}
+
+═══ VISUAL REFERENCES ═══
+Category Visual Context: ${visualContext}
+Tone Mood: ${visualMood}
+${brandSection}${profileSection}
+
+สร้าง prompt ที่:
+1. main_prompt: ภาษาอังกฤษ ละเอียด copy-paste ใส่ Midjourney/DALL-E ได้เลย
+   - รวม subject, environment, lighting, camera lens, style, mood
+   - ลงท้ายด้วย Midjourney parameters: ${mjAR} --style raw --v 6.1
+2. dalle_prompt: ปรับสำหรับ DALL-E 3 (ไม่มี -- parameters, เป็น prose)
+3. text_overlay: ข้อความไทยซ้อนบนภาพ (hook หรือ title สั้นๆ max 2 บรรทัด)
+4. negative_prompt: สิ่งที่ไม่ต้องการ (Midjourney --no format)
+5. layout_spec: อธิบาย safe zone สำหรับข้อความ, focal point, composition
+6. canvas_size: "${canvas}"
+7. brand_style: โทนสีหลัก + secondary + typography suggestion
+
+ตอบกลับเป็น JSON:
+{
+  "main_prompt": "detailed Midjourney prompt ending with ${mjAR} --style raw --v 6.1",
+  "dalle_prompt": "DALL-E 3 prose prompt, same scene but written as a sentence",
+  "text_overlay": "ข้อความไทย 1-2 บรรทัดสำหรับซ้อนบนภาพ",
+  "negative_prompt": "blurry, text watermarks, cartoon, anime, unrealistic --no ...",
+  "layout_spec": "composition and safe zone description",
+  "canvas_size": "${canvas}",
+  "brand_style": "primary #HEX, secondary #HEX — font suggestion — overall mood"
+}`
+}
+
+function buildVideoPromptPrompt(req: Record<string, unknown>, content: Record<string, unknown>) {
+  const duration = Number(req.video_duration ?? 60)
+  const style = String(req.video_style ?? 'slideshow')
+  const brief = String(req.brief ?? '')
+  const lawCategoryLine = brief.match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
+
+  const sceneCount = duration <= 30 ? 3 : duration <= 60 ? 5 : duration <= 90 ? 7 : 10
+  const secondsPerScene = Math.round(duration / sceneCount)
+
+  const styleGuide: Record<string, string> = {
+    talking_head: 'presenter talks directly to camera, professional background, good lighting, medium shot',
+    slideshow: 'animated slides with text, smooth transitions, each slide 5-8 seconds, Ken Burns effect on images',
+    animated: 'motion graphics, animated text and icons, brand colors, smooth animations',
+    documentary: 'B-roll footage with voiceover, establishing shots, cutaway visuals, news-style',
+  }
+  const styleDesc = styleGuide[style] ?? styleGuide.slideshow
+
+  const categoryMap: Record<string, string> = {
+    'กฎหมายบริษัท': 'corporate', 'ภาษีและบัญชี': 'tax', 'อสังหาริมทรัพย์': 'property',
+    'แรงงาน': 'labor', 'สัญญา': 'contract', 'อาญา': 'criminal', 'ครอบครัว/มรดก': 'family',
+    'ทรัพย์สินทางปัญญา': 'ip', 'คดีความ/ฟ้องร้อง': 'litigation',
+    'การเงิน/หลักทรัพย์': 'finance', 'วีซ่า/คนเข้าเมือง': 'immigration', 'สิ่งแวดล้อม/ผังเมือง': 'environment',
+  }
+  const firstCategory = (lawCategoryLine.split(',')[0]?.trim() ?? '')
+  const categoryKey = categoryMap[firstCategory] ?? 'corporate'
+  const brollContext = LAW_VISUAL_CONTEXT[categoryKey] ?? LAW_VISUAL_CONTEXT.corporate
+
+  return `คุณเป็น video director และ script writer ผู้เชี่ยวชาญ short-form video สำหรับ Facebook/Instagram
+สร้าง video brief ที่ละเอียด copy-paste ready ให้ลูกค้าเอาไปสร้างวิดีโอเองด้วย CapCut, RunwayML, Kling AI หรือจ้างทีม video
+
+═══ BRIEF ═══
+Topic: ${req.topic}
+Law Category: ${lawCategoryLine || 'General Law'}
+Duration: ${duration} วินาที (${sceneCount} scenes × ~${secondsPerScene}s)
+Style: ${style} — ${styleDesc}
+Tone: ${req.tone ?? 'professional'}
+
+═══ CONTENT ═══
+Title: ${String(content.title ?? '')}
+Hook: ${String(content.hook ?? '')}
+Body: ${String(content.body ?? '')}
+CTA: ${String(content.cta ?? '')}
+
+═══ VISUAL REFERENCE ═══
+B-roll context: ${brollContext}
+
+สร้าง video brief ที่ประกอบด้วย:
+1. video_title: ชื่อวิดีโอ
+2. hook: ประโยคเปิด 0-3 วินาทีแรก (ต้องหยุดคนเลื่อน feed)
+3. scene_breakdown: array ของทุก scene พร้อม timestamp, visual direction, และ text on screen
+4. voiceover_script: script เต็มทุกประโยค (ภาษาไทย natural speaking style)
+5. visual_prompts: array ของ AI image/video prompts (English) สำหรับแต่ละ scene — ใช้กับ Runway, Kling, Pika ได้เลย
+6. subtitle_text: ข้อความ subtitle หลักที่ต้องแสดงตลอดหรือช่วงสำคัญ
+7. music_mood: อารมณ์ดนตรี background ที่เหมาะสม
+8. text_animations: รายการ text/graphic animations สำคัญ
+9. cta: call to action ช่วงสุดท้าย (3-5 วินาที)
+10. tools_suggestion: แนะนำ tool ที่เหมาะกับ style นี้ (CapCut, RunwayML, Kling, Adobe Express)
+
+ตอบกลับเป็น JSON:
+{
+  "video_title": "ชื่อวิดีโอ",
+  "hook": "ประโยค hook 0-3 วินาที",
+  "scene_breakdown": [
+    {
+      "scene": 1,
+      "timestamp": "0:00-0:${secondsPerScene}",
+      "visual": "visual direction ภาษาอังกฤษสำหรับ AI video",
+      "text_on_screen": "ข้อความที่แสดงบนหน้าจอ",
+      "voiceover": "บทพูดช่วงนี้",
+      "transition": "cut / fade / slide"
+    }
+  ],
+  "voiceover_script": "script เต็มทุกประโยค พร้อม [pause] markers",
+  "visual_prompts": [
+    "scene 1: cinematic shot of ... RunwayML prompt",
+    "scene 2: ..."
+  ],
+  "subtitle_text": "ข้อความ subtitle หลัก",
+  "music_mood": "เช่น corporate uplifting, calm professional, urgent dramatic",
+  "text_animations": ["ชื่อเรื่อง fade-in ที่ 0:01", "bullet points slide-in ที่ 0:15"],
+  "cta": "call to action ท้ายวิดีโอ",
+  "tools_suggestion": "แนะนำ tool พร้อมเหตุผล"
+}`
+}
+
+async function pollOnce() {
+  try {
+    const res = await fetch(`${APP_URL}/api/local/hermes/queue`)
+    if (!res.ok) { console.error(`[hermes] Queue fetch failed: ${res.status}`); return }
+
+    const jobs: Array<{ job: Record<string, unknown>; requirement: Record<string, unknown> }> = await res.json()
+    if (!Array.isArray(jobs) || jobs.length === 0) return
+
+    console.log(`[hermes] Processing ${jobs.length} job(s)`)
+    for (const { job, requirement } of jobs) {
+      console.log(`[hermes] Job ${job.id} — ${requirement.topic}`)
+      await processJob(job, requirement)
+    }
+  } catch (err: unknown) {
+    console.error(`[hermes] pollOnce error:`, err)
+  }
+}
+
+const PUBLISH_INTERVAL = 5 * 60 * 1000 // 5 minutes
+
+async function publishDue() {
+  try {
+    const res = await fetch(`${APP_URL}/api/local/calendar/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    if (!res.ok) return
+    const data = await res.json() as { published?: number; message?: string }
+    if (data.published && data.published > 0) {
+      console.log(`[hermes] 📤 Published ${data.published} post(s) to Facebook`)
+    }
+  } catch {
+    // silent — Next.js may not be up yet
+  }
+}
+
+console.log(`[hermes] Starting — polling ${APP_URL} every ${INTERVAL / 1000}s | publish check every ${PUBLISH_INTERVAL / 60000}min`)
+setInterval(pollOnce, INTERVAL)
+setInterval(publishDue, PUBLISH_INTERVAL)
+pollOnce()
+publishDue()
+
+process.on('SIGINT', () => { console.log('[hermes] Shutting down...'); process.exit(0) })

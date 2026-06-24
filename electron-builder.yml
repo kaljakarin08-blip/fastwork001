@@ -1,0 +1,50 @@
+appId: com.lawfirm.aicos
+productName: Law AI Content OS
+copyright: Copyright © 2026
+
+directories:
+  output: dist-electron
+  buildResources: build
+
+# Only electron-dist (main.js) goes in asar — Electron loads it natively
+files:
+  - electron-dist/**
+
+# Everything spawned as child processes must be real files, not inside asar
+extraResources:
+  - from: .next/standalone
+    to: .next/standalone
+    filter:
+      - "**"
+  - from: dist/hermes.js
+    to: dist/hermes.js
+  - from: electron/splash.html
+    to: electron/splash.html
+  - from: public
+    to: public
+  - from: lib/local-db/migrations
+    to: lib/local-db/migrations
+    filter: "**/*.sql"
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: public/app-icon.icns
+  category: public.app-category.productivity
+  darkModeSupport: true
+
+dmg:
+  title: Law AI Content OS
+  window:
+    width: 540
+    height: 380
+
+afterPack: "./scripts/after-pack.js"
+
+npmRebuild: true
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/better-sqlite3/**"

@@ -1,0 +1,180 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  /* Legal Ledger palette */
+  --background: #FAFAF8;
+  --sidebar-bg: #111827;
+  --sidebar-border: #1F2937;
+  --sidebar-text: #9CA3AF;
+  --sidebar-text-active: #F9FAFB;
+  --gold: #C9A227;
+  --gold-light: #F5E6A8;
+  --gold-muted: #92751B;
+  --card: #FFFFFF;
+  --card-border: #E5E7EB;
+  --foreground: #374151;
+  --heading: #111827;
+  --muted: #F9FAFB;
+  --muted-foreground: #6B7280;
+  --radius: 0.75rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body, -apple-system, 'Inter', system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Display headings use Playfair */
+h1, .heading-display {
+  font-family: var(--font-display, Georgia, 'Times New Roman', serif);
+  color: var(--heading);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+h2, h3 {
+  color: var(--heading);
+}
+
+code, pre, .font-mono {
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Card */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 6px -1px rgb(0 0 0 / 0.02);
+}
+
+/* Table header */
+.th {
+  padding: 0.625rem 1rem;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: var(--muted);
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* Gold primary button */
+.btn-gold {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--gold);
+  color: #111827;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.625rem;
+  transition: background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 3px rgb(201 162 39 / 0.3);
+  letter-spacing: 0.01em;
+}
+
+.btn-gold:hover {
+  background: #B8911E;
+  box-shadow: 0 2px 8px rgb(201 162 39 / 0.4);
+}
+
+/* Ghost button */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-ghost:hover {
+  background: var(--muted);
+  border-color: #D1D5DB;
+}
+
+/* Form inputs */
+input[type="text"],
+input[type="date"],
+input[type="time"],
+input[type="number"],
+input[type="email"],
+select,
+textarea {
+  border: 1px solid #D1D5DB;
+  border-radius: 0.5rem;
+  padding: 0.5625rem 0.875rem;
+  font-size: 0.875rem;
+  color: var(--heading);
+  background: white;
+  width: 100%;
+  outline: none;
+  font-family: var(--font-body, system-ui);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgb(201 162 39 / 0.15);
+}
+
+input::placeholder, textarea::placeholder { color: #9CA3AF; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* Pipeline stage dots */
+.pipeline-stages {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.pipeline-stage {
+  height: 3px;
+  border-radius: 9999px;
+  flex: 1;
+  background: #E5E7EB;
+  transition: background 0.2s;
+}
+
+.pipeline-stage.done { background: #C9A227; }
+.pipeline-stage.active { background: #F59E0B; }
+.pipeline-stage.failed { background: #EF4444; }
