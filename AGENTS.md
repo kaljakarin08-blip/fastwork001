@@ -1,15 +1,17 @@
 # AGENTS.md — Law AI Content OS (law-content-v2)
 > อ่านไฟล์นี้ก่อนทุกครั้ง | Executor: Codex | Orchestrator: Claude Code
+> **Last Updated:** 2026-06-24
 
 ---
 
 ## Project Overview
 
-**Stack:** Next.js 16 (App Router) + TypeScript + Tailwind CSS + shadcn/ui  
-**Database:** SQLite local (`better-sqlite3`) — ไม่มี Supabase, ไม่มี network DB  
+**Stack:** Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui  
+**Database:** Supabase PostgreSQL (cloud) — API routes ทั้งหมดใช้ Supabase  
+**Local DB:** `better-sqlite3` ยังมีอยู่ใน `lib/local-db/client.ts` แต่ **ใช้เฉพาะใน Electron desktop app เท่านั้น** — ห้ามใช้ใน API routes  
 **AI:** OpenAI GPT-4o via `lib/agents/`  
 **Background worker:** Hermes (`hermes/worker.ts`) — polls `/api/local/hermes/queue`  
-**Deployment target:** Electron desktop app (`.dmg`) — packaged via `electron-builder`
+**Deployment:** Vercel (web) + Electron desktop app (`.dmg`)
 
 ---
 
@@ -21,30 +23,29 @@ pnpm install
 ```
 
 ### 2. Environment variables
-Copy `.env.local.example` → `.env.local` (ถ้ายังไม่มี):
 ```bash
 cp .env.local.example .env.local 2>/dev/null || true
 ```
 Required:
-- `OPENAI_API_KEY=sk-...` — ใส่ key ที่มี
+- `OPENAI_API_KEY=sk-...`
+- `NEXT_PUBLIC_SUPABASE_URL=...`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY=...`
+- `SUPABASE_SERVICE_ROLE_KEY=...`
 - `NEXT_PUBLIC_APP_URL=http://localhost:3000`
 
 ### 3. Start dev server
 ```bash
-pnpm dev
+pnpm dev   # http://localhost:3000
 ```
-Next.js runs on **http://localhost:3000**
 
 ### 4. Start Hermes worker (optional — separate terminal)
 ```bash
 pnpm hermes
 ```
-Hermes จะ poll `/api/local/hermes/queue` ทุก 45 วินาที
 
 ### 5. Verify runtime is ready
 ```bash
 curl http://localhost:3000/api/health   # → {"ok":true}
-curl http://localhost:3000/api/local/stats
 ```
 
 ---
@@ -56,8 +57,6 @@ pnpm typecheck   # tsc --noEmit — 0 errors
 pnpm build       # next build — must succeed
 ```
 
-No lint script — typecheck + build เป็น gate หลัก
-
 ---
 
 ## Architecture
@@ -65,88 +64,95 @@ No lint script — typecheck + build เป็น gate หลัก
 ```
 law-content-v2/
 ├── app/
-│   ├── api/local/          ← API routes ทั้งหมด (SQLite-backed)
-│   │   ├── requirements/   ← CRUD content requirements
-│   │   ├── hermes/queue    ← Hermes job queue
-│   │   ├── jobs/           ← Job status tracking
-│   │   ├── stats/          ← Dashboard stats
-│   │   ├── app-settings/   ← OpenAI key, model, etc.
-│   │   ├── brand-profile/  ← Firm name, tone, colors
-│   │   ├── creative-profiles/
-│   │   ├── facebook-accounts/
-│   │   ├── rag/search      ← Full-text search (FTS5)
-│   │   └── calendar/       ← Scheduled posts
+│   ├── api/
+│   │   ├── ai/             ← AI pipeline routes (Supabase-backed)
+│   │   ├── health/         ← Health check
+│   │   └── local/          ← App routes (Supabase-backed)
+│   │       ├── requirements/
+│   │       ├── hermes/queue
+│   │       ├── jobs/
+│   │       ├── stats/
+│   │       ├── app-settings/
+│   │       ├── brand-profile/
+│   │       ├── creative-profiles/
+│   │       ├── facebook-accounts/
+│   │       ├── rag/            ← RAG search + index (Supabase rag_chunks)
+│   │       ├── upload-image/   ← ⚠️ ยังใช้ local fs (Electron only)
+│   │       └── calendar/
 │   └── dashboard/          ← UI pages (App Router)
 │
 ├── lib/
+│   ├── supabase/
+│   │   └── admin.ts        ← Supabase admin client (getSupabase())
 │   ├── local-db/
-│   │   ├── client.ts       ← SQLite singleton (better-sqlite3)
-│   │   └── migrations/     ← SQL migration files (001–007)
+│   │   ├── client.ts       ← SQLite singleton — Electron only, ห้ามใช้ใน API routes
+│   │   ├── get-setting.ts  ← getSetting() อ่านจาก Supabase app_settings
+│   │   └── migrations/     ← SQL migrations (สำหรับ Electron local DB)
 │   ├── agents/             ← AI pipeline steps
-│   │   ├── content-gen.ts
-│   │   ├── image-gen.ts
-│   │   ├── image-prompt.ts
-│   │   ├── qc-agent.ts
-│   │   └── source-search.ts
-│   └── prompts/            ← All AI prompts (never hardcode in components)
+│   └── prompts/            ← AI prompt templates
 │
 ├── hermes/
 │   └── worker.ts           ← Background job processor
+│
+├── supabase/
+│   └── migrations/         ← Supabase schema migrations
+│       ├── 001_init.sql
+│       └── 002_rag_chunks.sql
 │
 ├── components/             ← Shared UI (shadcn/ui base)
 ├── types/index.ts          ← Shared TypeScript types
 │
 └── electron/               ← Desktop packaging (DO NOT touch during web tasks)
-    ├── main.ts
-    └── splash.html
 ```
 
 ---
 
 ## Database
 
-**SQLite path (dev):** `./local.db` (project root, gitignored)  
-**SQLite path (production/Electron):** `~/Library/Application Support/Law AI Content OS/data/local.db`
+**Primary DB:** Supabase PostgreSQL — ใช้สำหรับ API routes ทั้งหมดบน Vercel  
+**Local DB:** SQLite (`better-sqlite3`) — ใช้เฉพาะ Electron desktop app เท่านั้น
 
-Migrations run automatically on first request via `lib/local-db/client.ts`.
-
-**Key tables:**
+**Supabase key tables:**
 | Table | Purpose |
 |-------|---------|
-| `requirements` | Content requests from user |
-| `jobs` | Pipeline job tracking (queued/running/done/failed) |
+| `requirements` | Content requests |
+| `jobs` | Pipeline job tracking |
 | `outputs` | Generated content + images |
-| `app_settings` | OpenAI key, model, poll interval |
+| `app_settings` | OpenAI key, model, settings |
 | `brand_profile` | Firm identity |
 | `creative_profiles` | Tone/style presets |
 | `facebook_accounts` | Connected FB pages |
+| `knowledge_sources` | RAG source documents |
+| `rag_chunks` | RAG text chunks (ilike search) |
 
-**Never use Supabase or any external DB** — everything is local SQLite.
+**DB access pattern:**
+```ts
+import { getSupabase } from '@/lib/supabase/admin'
+const sb = getSupabase()
+const { data, error } = await sb.from('table').select('*')
+```
 
 ---
 
 ## API Conventions
 
-All API routes under `app/api/local/`:
-- Use `lib/local-db/client.ts` for DB access
+- ทุก API route ใช้ **Supabase** — ห้ามใช้ `lib/local-db/client.ts` ใน `app/api/`
 - Return `NextResponse.json({ error })` on failure
-- No auth (local app, single user)
-- TypeScript types in `types/index.ts`
+- No auth (single-user app)
+- TypeScript types ใน `types/index.ts`
 
 ---
 
 ## Hermes Worker
 
-Hermes (`hermes/worker.ts`) is the AI pipeline runner:
-1. Polls `GET /api/local/hermes/queue` every 45s
-2. Picks up `queued` requirements
-3. Runs pipeline: topic → content gen → image prompt → image gen → QC
-4. Updates requirement status via `PATCH /api/local/requirements/[id]`
-5. Posts output to Facebook if `publish_at` is set
+Hermes (`hermes/worker.ts`) เป็น AI pipeline runner:
+1. Polls `GET /api/local/hermes/queue` ทุก 45s
+2. รัน pipeline: topic → content gen → image prompt → image gen → QC
+3. Posts output to Facebook ถ้า `publish_at` set
 
-**Environment vars Hermes needs:**
+**Environment vars:**
 - `OPENAI_API_KEY`
-- `HERMES_APP_URL=http://localhost:3000` (defaults to this)
+- `HERMES_APP_URL=http://localhost:3000`
 
 ---
 
@@ -154,15 +160,16 @@ Hermes (`hermes/worker.ts`) is the AI pipeline runner:
 
 **แตะได้:**
 - `app/` — pages + API routes
-- `lib/` — business logic, agents, prompts, DB client
+- `lib/` — business logic, agents, prompts
+- `lib/supabase/` — Supabase client
 - `hermes/` — worker logic
 - `components/` — UI components
 - `types/index.ts` — shared types
-- `supabase/` — จริงๆ ไม่มี Supabase แต่ถ้ามี migration ให้เป็น SQLite migration ใน `lib/local-db/migrations/`
+- `supabase/migrations/` — Supabase schema migrations
 
 **ห้ามแตะ:**
+- `lib/local-db/client.ts` จาก API routes — Electron only
 - `electron/` — Electron main process (PM only)
-- `scripts/` — Build scripts (PM only)
 - `electron-builder.yml` — Package config (PM only)
 - `.env.local` — Never commit secrets
 
@@ -172,16 +179,15 @@ Hermes (`hermes/worker.ts`) is the AI pipeline runner:
 
 ### Add a new API route
 1. สร้าง `app/api/local/[name]/route.ts`
-2. Import `getDb` จาก `lib/local-db/client.ts`
+2. Import `getSupabase` จาก `lib/supabase/admin`
 3. Add TypeScript type ใน `types/index.ts`
 
-### Add a migration
-1. สร้าง `lib/local-db/migrations/008_description.sql`
-2. Migrations รันอัตโนมัติ — ไม่ต้อง run script เอง
+### Add a Supabase migration
+1. สร้าง `supabase/migrations/00N_description.sql`
+2. Apply ใน Supabase dashboard SQL Editor
 
 ### Add an AI prompt
 1. เพิ่มใน `lib/prompts/` — ห้าม hardcode ใน components
-2. Export เป็น function หรือ string constant
 
 ### Run full build check
 ```bash
