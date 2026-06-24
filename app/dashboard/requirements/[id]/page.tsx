@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { statusLabel, statusColor } from '@/lib/utils'
 import ApproveSchedule from './ApproveSchedule'
 import SelectFbAccount from './SelectFbAccount'
+import ProcessNowButton from './ProcessNowButton'
 import RejectDeleteActions from './RejectDeleteActions'
 import PublishedPostPreview from './PublishedPostPreview'
 import { CopyButton } from './CopyButton'
@@ -283,18 +284,7 @@ export default async function RequirementDetailPage({
       )}
 
       {/* Empty state */}
-      {!output && !image_prompt && (
-        <div className="card p-10 text-center">
-          <p className="text-slate-400 text-sm">ยังไม่มี output</p>
-          <p className="text-slate-400 text-sm mt-1">
-            รัน{' '}
-            <code className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-xs text-orange-600">
-              pnpm hermes
-            </code>{' '}
-            เพื่อให้ระบบประมวลผล
-          </p>
-        </div>
-      )}
+      {!output && !image_prompt && <ProcessNowButton />}
     </div>
   )
 }
