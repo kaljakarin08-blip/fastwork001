@@ -60,7 +60,17 @@ export default async function RequirementDetailPage({
               )}
             </div>
           </div>
-          <RejectDeleteActions requirementId={req.id} status={req.status} />
+          <div className="flex items-center gap-2">
+            {['requested', 'pending', 'processing'].includes(req.status) && (
+              <Link
+                href={`/dashboard/requirements/${req.id}/edit`}
+                className="btn-ghost text-sm"
+              >
+                แก้ไข
+              </Link>
+            )}
+            <RejectDeleteActions requirementId={req.id} status={req.status} />
+          </div>
         </div>
       </div>
 
