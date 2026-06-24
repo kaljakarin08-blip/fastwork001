@@ -47,9 +47,18 @@ export interface Requirement {
   priority: Priority
   status: RequirementStatus
   notes: string | null
+  source_url: string | null
   created_at: string
   updated_at: string
   creative_profile_id: string | null
+}
+
+export interface LayoutSpec {
+  key: string
+  size: string
+  ratio: string
+  safe_zone: string
+  dalle_size: string
 }
 
 export interface FacebookAccount {
@@ -91,6 +100,8 @@ export interface ContentOutput {
   cta: string | null
   hashtags: string | null
   compliance_note: string | null
+  suggested_layout: string | null
+  layout_spec: LayoutSpec | null
   status: string
   created_at: string
   updated_at: string

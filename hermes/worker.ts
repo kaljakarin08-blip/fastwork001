@@ -1,14 +1,43 @@
-import dotenv from 'dotenv'
-// Next.js stores keys in .env.local — load it before .env so it takes precedence
-dotenv.config({ path: '.env.local' })
-dotenv.config()
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
+import { getSupabase } from '@/lib/supabase/admin'
+
+function loadLocalEnvFile(filename: string) {
+  const fullPath = path.join(process.cwd(), filename)
+  if (!fs.existsSync(fullPath)) return
+
+  const lines = fs.readFileSync(fullPath, 'utf8').split('\n')
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const eqIndex = line.indexOf('=')
+    if (eqIndex <= 0) continue
+    const key = line.slice(0, eqIndex).trim()
+    let value = line.slice(eqIndex + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (!(key in process.env)) process.env[key] = value
+  }
+}
+
+loadLocalEnvFile('.env.local')
+loadLocalEnvFile('.env')
 
 const APP_URL = process.env.HERMES_APP_URL ?? 'http://localhost:3000'
 const INTERVAL = parseInt(process.env.HERMES_POLL_INTERVAL_SECONDS ?? '45') * 1000
+const DEFAULT_LAYOUT = 'feed_square'
+
+const LAYOUT_SPEC: Record<string, { key: string; size: string; ratio: string; safe_zone: string; dalle_size: string }> = {
+  feed_square: { key: 'feed_square', size: '1200x1200', ratio: '1:1', safe_zone: 'text ไม่เกิน 20% ของพื้นที่', dalle_size: '1024x1024' },
+  feed_vertical: { key: 'feed_vertical', size: '960x1200', ratio: '4:5', safe_zone: 'text ไม่เกิน 20% ของพื้นที่', dalle_size: '1024x1024' },
+  feed_link: { key: 'feed_link', size: '1200x628', ratio: '1.9:1', safe_zone: 'text ไม่เกิน 20% ของพื้นที่', dalle_size: '1792x1024' },
+  story: { key: 'story', size: '1080x1920', ratio: '9:16', safe_zone: 'text ไม่เกิน 30% ของพื้นที่', dalle_size: '1024x1792' },
+  album_cover: { key: 'album_cover', size: '1280x1920', ratio: '2:3', safe_zone: 'text ไม่เกิน 20% ของพื้นที่', dalle_size: '1024x1792' },
+}
 
 interface BrandContext {
   firmName: string
@@ -27,7 +56,7 @@ interface BrandContext {
   openaiKey: string
 }
 
-async function loadBrandContext(): Promise<BrandContext> {
+async function loadBrandContext(appUrl = APP_URL): Promise<BrandContext> {
   const defaults: BrandContext = {
     firmName: 'สำนักงานกฎหมาย',
     tagline: '',
@@ -46,8 +75,8 @@ async function loadBrandContext(): Promise<BrandContext> {
   }
   try {
     const [brandRes, settingsRes] = await Promise.all([
-      fetch(`${APP_URL}/api/local/brand-profile`).catch(() => null),
-      fetch(`${APP_URL}/api/local/app-settings`).catch(() => null),
+      fetch(`${appUrl}/api/local/brand-profile`).catch(() => null),
+      fetch(`${appUrl}/api/local/app-settings`).catch(() => null),
     ])
     const brand = brandRes?.ok ? await brandRes.json() : {}
     const settings = settingsRes?.ok ? await settingsRes.json() : {}
@@ -122,7 +151,7 @@ async function callLLM(opts: {
   const openai = new OpenAI({ apiKey: openaiKey })
   const isOSeries = /^o\d/.test(model) // o3, o4-mini, o4-mini-high, etc.
 
-  const params: Parameters<typeof openai.chat.completions.create>[0] = {
+  const params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
     model,
     messages: [
       { role: 'system', content: system },
@@ -135,7 +164,7 @@ async function callLLM(opts: {
     ],
     response_format: { type: 'json_object' },
   }
-  if (!isOSeries) (params as Record<string, unknown>).temperature = 0.7
+  if (!isOSeries) params.temperature = 0.7
 
   const res = await openai.chat.completions.create(params)
   return res.choices[0]?.message?.content ?? '{}'
@@ -149,6 +178,11 @@ async function generateImage(prompt: string, openaiKey: string, layout = 'square
     landscape_16x9: '1792x1024',
     portrait_4x5: '1024x1792',
     story_9x16: '1024x1792',
+    feed_square: '1024x1024',
+    feed_vertical: '1024x1024',
+    feed_link: '1792x1024',
+    story: '1024x1792',
+    album_cover: '1024x1792',
   }
   const size = sizeMap[layout] ?? '1024x1024'
 
@@ -162,7 +196,7 @@ async function generateImage(prompt: string, openaiKey: string, layout = 'square
   })
 
   // Use URL if b64_json not returned (API version difference)
-  const imageUrl = res.data[0]?.url
+  const imageUrl = res.data?.[0]?.url
   if (!imageUrl) return null
 
   // Download image and save to public/generated/
@@ -180,8 +214,8 @@ async function generateImage(prompt: string, openaiKey: string, layout = 'square
 
 // ─── Auto-schedule helper ──────────────────────────────────────────────────
 
-async function autoSchedule(reqId: string, facebookAccountId: string) {
-  await fetch(`${APP_URL}/api/local/calendar/schedule`, {
+async function autoSchedule(reqId: string, facebookAccountId: string, appUrl = APP_URL) {
+  await fetch(`${appUrl}/api/local/calendar/schedule`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -196,55 +230,76 @@ async function autoSchedule(reqId: string, facebookAccountId: string) {
   }).catch(() => null)
 }
 
-async function updateJobStatus(jobId: string, status: string, error?: string) {
-  await fetch(`${APP_URL}/api/local/hermes/jobs/${jobId}/status`, {
+async function updateJobStatus(jobId: string, status: string, error?: string, appUrl = APP_URL) {
+  await fetch(`${appUrl}/api/local/hermes/jobs/${jobId}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, error_message: error }),
   }).catch(() => null)
 }
 
-async function updateReqStatus(reqId: string, status: string) {
-  await fetch(`${APP_URL}/api/local/requirements/${reqId}`, {
+async function updateReqStatus(reqId: string, status: string, appUrl = APP_URL) {
+  await fetch(`${appUrl}/api/local/requirements/${reqId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   }).catch(() => null)
 }
 
-async function processJob(job: Record<string, unknown>, requirement: Record<string, unknown>) {
+async function fetchUrlContent(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LawAIBot/2.0)' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return ''
+    const html = await res.text()
+    return html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 2000)
+  } catch {
+    return ''
+  }
+}
+
+export async function processJob(job: Record<string, unknown>, requirement: Record<string, unknown>, appUrl = APP_URL) {
   const jobId = job.id as string
   const reqId = requirement.id as string
-  const brand = await loadBrandContext()
+  const brand = await loadBrandContext(appUrl)
+  const sb = getSupabase()
   const openaiKey = brand.openaiKey
   const llm = (system: string, user: string | MsgImageContent[]) =>
     callLLM({ model: brand.model, system, user, openaiKey, anthropicKey: brand.anthropicKey })
 
-  await updateJobStatus(jobId, 'running')
+  await updateJobStatus(jobId, 'running', undefined, appUrl)
 
   try {
     // Step 1: Auto-topic from RAG if topic is empty
     if (!requirement.topic) {
       const categoryLine = String(requirement.brief ?? '').match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
       if (!categoryLine) {
-        await updateJobStatus(jobId, 'failed', 'Missing topic — กรุณาใส่ Topic หรือเลือกหมวดหมู่กฎหมาย')
-        await updateReqStatus(reqId, 'failed')
+        await updateJobStatus(jobId, 'failed', 'Missing topic — กรุณาใส่ Topic หรือเลือกหมวดหมู่กฎหมาย', appUrl)
+        await updateReqStatus(reqId, 'failed', appUrl)
         return
       }
-      await updateReqStatus(reqId, 'rag_searching')
-      const autoRes = await fetch(`${APP_URL}/api/local/rag/search`, {
+      await updateReqStatus(reqId, 'rag_searching', appUrl)
+      const autoRes = await fetch(`${appUrl}/api/local/rag/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: categoryLine, limit: 10 }),
       }).catch(() => null)
       const autoNotes: Array<{ title: string; score: number }> = autoRes?.ok ? await autoRes.json() : []
       if (!autoNotes.length) {
-        await updateJobStatus(jobId, 'failed', 'Auto-topic: ไม่พบข้อมูลใน RAG vault สำหรับหมวดหมู่นี้ — รัน pnpm rag:index หลังเพิ่มข้อมูลใน Obsidian')
-        await updateReqStatus(reqId, 'needs_research')
+        await updateJobStatus(jobId, 'failed', 'Auto-topic: ไม่พบข้อมูลใน RAG vault สำหรับหมวดหมู่นี้ — รัน pnpm rag:index หลังเพิ่มข้อมูลใน Obsidian', appUrl)
+        await updateReqStatus(reqId, 'needs_research', appUrl)
         return
       }
       requirement.topic = autoNotes[0].title
-      await fetch(`${APP_URL}/api/local/requirements/${reqId}`, {
+      await fetch(`${appUrl}/api/local/requirements/${reqId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: requirement.topic }),
@@ -252,29 +307,53 @@ async function processJob(job: Record<string, unknown>, requirement: Record<stri
       console.log(`[hermes] Auto-topic: "${requirement.topic}"`)
     }
 
-    // Step 2: Topic Guard — reject if not law/content related
-    const guardRaw = await llm(
-      `คุณเป็น gatekeeper ระบบ AI Content สำหรับสำนักงานกฎหมาย
-หน้าที่: ตรวจสอบว่า topic ที่ส่งมาเกี่ยวกับ (1) กฎหมายไทย หรือ (2) การสร้าง legal content เท่านั้น
-ตอบกลับเป็น JSON เท่านั้น: { "ok": true/false, "reason": "..." }
-- ok: true → topic เกี่ยวกับกฎหมายหรือ legal content → ผ่าน
-- ok: false → topic นอกเรื่อง เช่น การทำอาหาร ท่องเที่ยว เทคโนโลยีทั่วไป ฯลฯ → reject`,
-      `Topic: ${requirement.topic}\nBrief: ${String(requirement.brief ?? '').slice(0, 300)}`
-    ).catch(() => '{"ok":true,"reason":"guard_error"}')
+    let urlContent = ''
+    const sourceUrl = String(requirement.source_url ?? '')
+    if (sourceUrl.startsWith('http')) {
+      urlContent = await fetchUrlContent(sourceUrl)
+    }
 
-    let guardResult: { ok: boolean; reason?: string } = { ok: true }
+    const guardRaw = await llm(
+      `คุณเป็น gatekeeper + layout advisor สำหรับ AI Content ของสำนักงานกฎหมาย
+ตรวจสอบว่า topic เกี่ยวกับ (1) กฎหมายไทย หรือ (2) legal content เท่านั้น
+พร้อม suggest layout ที่เหมาะสม
+
+Layout ที่มี:
+- feed_square (1:1) — tips, checklist, numbered list ทั่วไป
+- feed_vertical (4:5) — article, long content, บทความยาว
+- feed_link (1.9:1) — แชร์ link, banner แนวนอน
+- story (9:16) — story, reels
+- album_cover (2:3) — album post แรก
+
+ตอบ JSON เท่านั้น:
+{ "ok": true, "reason": "...", "suggested_layout": "feed_square", "layout_reason": "เหตุผลสั้น" }`,
+      `Topic: ${requirement.topic}
+Brief: ${String(requirement.brief ?? '').slice(0, 300)}
+${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
+    ).catch(() => '{"ok":true,"reason":"guard_error","suggested_layout":"feed_square","layout_reason":"default"}')
+
+    let guardResult: { ok: boolean; reason?: string; suggested_layout?: string; layout_reason?: string } = {
+      ok: true,
+      suggested_layout: DEFAULT_LAYOUT,
+    }
     try { guardResult = JSON.parse(guardRaw) } catch { /* pass */ }
 
     if (!guardResult.ok) {
-      await updateJobStatus(jobId, 'failed', `off_topic: ${guardResult.reason ?? 'ไม่เกี่ยวกับกฎหมาย'}`)
-      await updateReqStatus(reqId, 'failed')
+      await updateJobStatus(jobId, 'failed', `off_topic: ${guardResult.reason ?? 'ไม่เกี่ยวกับกฎหมาย'}`, appUrl)
+      await updateReqStatus(reqId, 'failed', appUrl)
       console.log(`[hermes] 🚫 Rejected off-topic: "${requirement.topic}" — ${guardResult.reason}`)
       return
     }
 
+    const suggestedLayoutKey = LAYOUT_SPEC[String(requirement.layout_requirement ?? '')]
+      ? String(requirement.layout_requirement)
+      : (guardResult.suggested_layout ?? DEFAULT_LAYOUT)
+    const layoutSpec = LAYOUT_SPEC[suggestedLayoutKey] ?? LAYOUT_SPEC[DEFAULT_LAYOUT]
+    console.log(`[hermes] Layout: ${suggestedLayoutKey} — ${guardResult.layout_reason ?? ''}`)
+
     // Step 3: RAG Search
-    await updateReqStatus(reqId, 'rag_searching')
-    const ragRes = await fetch(`${APP_URL}/api/local/rag/search`, {
+    await updateReqStatus(reqId, 'rag_searching', appUrl)
+    const ragRes = await fetch(`${appUrl}/api/local/rag/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: requirement.topic, limit: 5 }),
@@ -286,31 +365,35 @@ async function processJob(job: Record<string, unknown>, requirement: Record<stri
     }
 
     const ragContext = sources.map(s => s.content).join('\n\n---\n\n')
+    const combinedContext = [
+      ragContext,
+      urlContent ? `\n\n=== เนื้อหาจาก URL อ้างอิง ===\n${urlContent}` : '',
+    ].join('').trim()
     if (sources.length === 0) {
       console.log(`[hermes] RAG: ไม่พบข้อมูลใน vault — generate โดยไม่มี RAG context`)
     }
 
     // Step 4: Generate Content
-    await updateReqStatus(reqId, 'content_generating')
+    await updateReqStatus(reqId, 'content_generating', appUrl)
     const contentSystemPrompt = brand.systemPrompt ||
       `คุณเป็น content writer ประจำ${brand.firmName} ผู้เชี่ยวชาญกฎหมายไทย
 หน้าที่: เขียน Facebook post เกี่ยวกับกฎหมายไทยเท่านั้น อ้างอิงจาก RAG Sources ที่ให้มา
 กฎเหล็ก: ห้ามสร้าง content นอกเรื่องกฎหมาย ถ้า topic ไม่เกี่ยวกับกฎหมายให้ตอบ { "error": "off_topic" }
 ตอบกลับเป็น JSON ตามรูปแบบที่กำหนด ไม่อ้างกฎหมายแน่นอนเกินจริง`
-    const contentRaw = await llm(contentSystemPrompt, buildContentPrompt(requirement, ragContext, brand))
+    const contentRaw = await llm(contentSystemPrompt, buildContentPrompt(requirement, combinedContext, brand))
     const content = JSON.parse(contentRaw)
     if (content.error === 'off_topic') {
-      await updateJobStatus(jobId, 'failed', 'off_topic: LLM ปฏิเสธ — topic ไม่เกี่ยวกับกฎหมาย')
-      await updateReqStatus(reqId, 'failed')
+      await updateJobStatus(jobId, 'failed', 'off_topic: LLM ปฏิเสธ — topic ไม่เกี่ยวกับกฎหมาย', appUrl)
+      await updateReqStatus(reqId, 'failed', appUrl)
       console.log(`[hermes] 🚫 LLM rejected off-topic: "${requirement.topic}"`)
       return
     }
 
     // Step 5: Generate Image Prompt
-    await updateReqStatus(reqId, 'image_prompt_generating')
+    await updateReqStatus(reqId, 'image_prompt_generating', appUrl)
     let creativeProfile: Record<string, unknown> | null = null
     if (requirement.creative_profile_id) {
-      const profileRes = await fetch(`${APP_URL}/api/local/creative-profiles/${requirement.creative_profile_id}`).catch(() => null)
+      const profileRes = await fetch(`${appUrl}/api/local/creative-profiles/${requirement.creative_profile_id}`).catch(() => null)
       if (profileRes?.ok) creativeProfile = await profileRes.json()
     }
     const refImages: string[] = creativeProfile?.reference_image_urls
@@ -328,16 +411,18 @@ async function processJob(job: Record<string, unknown>, requirement: Record<stri
     const imageSystemPrompt = brand.systemPrompt
       ? `${brand.systemPrompt}\n\nคุณสร้าง image prompt สำหรับ Facebook post ของ${brand.firmName} ตอบกลับเป็น JSON`
       : `คุณสร้าง image prompt สำหรับ Facebook post ของ${brand.firmName} ตอบกลับเป็น JSON`
+    const layoutInstruction = `\nFacebook Image Spec: layout=${layoutSpec.key}, ขนาด=${layoutSpec.size}, ratio=${layoutSpec.ratio}, ${layoutSpec.safe_zone}, brand primary=${brand.primaryColor}, secondary=${brand.secondaryColor}`
+    const imageSystemPromptFull = imageSystemPrompt + layoutInstruction
     const imgUser = refImages.length > 0
       ? imgUserContent
       : buildImagePromptPrompt(requirement, content, creativeProfile, brand)
-    const imagePromptRaw = await llm(imageSystemPrompt, imgUser)
+    const imagePromptRaw = await llm(imageSystemPromptFull, imgUser)
     const imagePrompt = JSON.parse(imagePromptRaw)
 
     // Step 5: Video Brief (optional)
     let videoPrompt: Record<string, unknown> | undefined
     if (requirement.video_create === 1) {
-      await updateReqStatus(reqId, 'video_prompt_generating')
+      await updateReqStatus(reqId, 'video_prompt_generating', appUrl)
       const videoSystemPrompt = brand.systemPrompt
         ? `${brand.systemPrompt}\n\nคุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
         : `คุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
@@ -347,9 +432,9 @@ async function processJob(job: Record<string, unknown>, requirement: Record<stri
 
     // Step 5.5: Generate actual image via DALL-E 3 (if not text-only layout)
     let generatedImageUrl: string | null = null
-    const layout = String(requirement.layout_requirement ?? 'square_1x1')
+    const layout = suggestedLayoutKey
     if (layout !== 'text_only' && imagePrompt.dalle_prompt) {
-      await updateReqStatus(reqId, 'image_generating')
+      await updateReqStatus(reqId, 'image_generating', appUrl)
       try {
         generatedImageUrl = await generateImage(String(imagePrompt.dalle_prompt), openaiKey, layout)
         console.log(`[hermes] Image: ${generatedImageUrl}`)
@@ -367,29 +452,36 @@ async function processJob(job: Record<string, unknown>, requirement: Record<stri
       relevance_score: s.score ?? 0.5,
     }))
 
-    await fetch(`${APP_URL}/api/local/hermes/requirements/${reqId}/output`, {
+    await fetch(`${appUrl}/api/local/hermes/requirements/${reqId}/output`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         content, image_prompt: imagePrompt, video_prompt: videoPrompt,
         rag_sources: ragSources,
         generated_image_url: generatedImageUrl,
+        suggested_layout: suggestedLayoutKey,
+        layout_spec: layoutSpec,
       }),
     })
 
-    await updateJobStatus(jobId, 'done')
+    await (sb as any)
+      .from('content_outputs')
+      .update({ suggested_layout: suggestedLayoutKey, layout_spec: layoutSpec })
+      .eq('requirement_id', reqId)
+
+    await updateJobStatus(jobId, 'done', undefined, appUrl)
     console.log(`[hermes] ✅ Done: ${reqId}`)
 
     // Step 7: Auto-schedule if facebook_account_id is set
     if (requirement.facebook_account_id) {
-      await autoSchedule(reqId, String(requirement.facebook_account_id))
+      await autoSchedule(reqId, String(requirement.facebook_account_id), appUrl)
       console.log(`[hermes] Auto-scheduled: ${reqId}`)
     }
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    await updateJobStatus(jobId, 'failed', msg)
-    await updateReqStatus(reqId, 'failed')
+    await updateJobStatus(jobId, 'failed', msg, appUrl)
+    await updateReqStatus(reqId, 'failed', appUrl)
     console.error(`[hermes] ❌ Failed: ${reqId}`, msg)
   }
 }
@@ -717,7 +809,7 @@ async function pollOnce() {
     console.log(`[hermes] Processing ${jobs.length} job(s)`)
     for (const { job, requirement } of jobs) {
       console.log(`[hermes] Job ${job.id} — ${requirement.topic}`)
-      await processJob(job, requirement)
+      await processJob(job, requirement, APP_URL)
     }
   } catch (err: unknown) {
     console.error(`[hermes] pollOnce error:`, err)
@@ -743,10 +835,14 @@ async function publishDue() {
   }
 }
 
-console.log(`[hermes] Starting — polling ${APP_URL} every ${INTERVAL / 1000}s | publish check every ${PUBLISH_INTERVAL / 60000}min`)
-setInterval(pollOnce, INTERVAL)
-setInterval(publishDue, PUBLISH_INTERVAL)
-pollOnce()
-publishDue()
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 
-process.on('SIGINT', () => { console.log('[hermes] Shutting down...'); process.exit(0) })
+if (isMain) {
+  console.log(`[hermes] Starting — polling ${APP_URL} every ${INTERVAL / 1000}s | publish check every ${PUBLISH_INTERVAL / 60000}min`)
+  setInterval(pollOnce, INTERVAL)
+  setInterval(publishDue, PUBLISH_INTERVAL)
+  pollOnce()
+  publishDue()
+
+  process.on('SIGINT', () => { console.log('[hermes] Shutting down...'); process.exit(0) })
+}
