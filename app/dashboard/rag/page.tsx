@@ -1,114 +1,286 @@
-import { SQLiteIcon } from '@/components/icons/brand-icons'
-import { KnowledgeSourcesList, GoogleDriveSetup } from './KnowledgeSources'
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+
+type KnowledgeSource = {
+  id: string
+  name: string
+  source_url: string
+  type: string
+  status: 'pending' | 'indexing' | 'indexed' | 'error'
+  chunk_count: number
+  error_message: string | null
+  last_indexed_at: string | null
+  created_at: string
+}
+
+type SearchResult = {
+  path: string
+  title: string
+  content: string
+}
+
+const inputCls = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-colors'
+
+function statusBadge(status: string) {
+  const map: Record<string, string> = {
+    pending: 'bg-slate-100 text-slate-500',
+    indexing: 'bg-blue-100 text-blue-700',
+    indexed: 'bg-green-100 text-green-700',
+    error: 'bg-red-100 text-red-600',
+  }
+  return `text-xs font-semibold px-2.5 py-1 rounded-full ${map[status] ?? 'bg-slate-100 text-slate-500'}`
+}
 
 export default function RagPage() {
-  const vaultPath = process.env.OBSIDIAN_VAULT_PATH ?? null
-  const ragPath = process.env.RAG_INDEX_PATH ?? null
+  const [sources, setSources] = useState<KnowledgeSource[]>([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState({ name: '', source_url: '' })
+  const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState('')
+  const [indexingId, setIndexingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+
+  const loadSources = useCallback(async () => {
+    const res = await fetch('/api/local/rag/sources')
+    const data = await res.json()
+    if (Array.isArray(data)) setSources(data)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadSources() }, [loadSources])
+
+  async function addSource(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.name.trim() || !form.source_url.trim()) return
+    setAdding(true)
+    setAddError('')
+    try {
+      const res = await fetch('/api/local/rag/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name, source_url: form.source_url }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setForm({ name: '', source_url: '' })
+      await loadSources()
+    } catch (err) {
+      setAddError(String(err))
+    }
+    setAdding(false)
+  }
+
+  async function indexSource(id: string) {
+    setIndexingId(id)
+    try {
+      await fetch('/api/local/rag/index-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      await loadSources()
+    } catch { /* ignore */ }
+    setIndexingId(null)
+  }
+
+  async function deleteSource(id: string) {
+    setDeletingId(id)
+    try {
+      await fetch('/api/local/rag/sources', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      await loadSources()
+    } catch { /* ignore */ }
+    setDeletingId(null)
+  }
+
+  async function search() {
+    if (!searchQuery.trim()) return
+    setSearching(true)
+    try {
+      const res = await fetch('/api/local/rag/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery, limit: 5 }),
+      })
+      const data = await res.json()
+      setSearchResults(Array.isArray(data) ? data : [])
+    } catch { /* ignore */ }
+    setSearching(false)
+  }
+
+  const totalChunks = sources.reduce((s, x) => s + (x.chunk_count ?? 0), 0)
+  const indexed = sources.filter(s => s.status === 'indexed').length
 
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-8">
+    <div className="p-8 max-w-3xl mx-auto space-y-8 pb-20">
+
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#111827' }}>RAG / Knowledge</h1>
-        <p className="text-sm text-gray-500 mt-1">Local knowledge base — SQLite FTS5 · Obsidian + URLs + Google Drive</p>
+        <h1 className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#111827' }}>
+          RAG / Knowledge
+        </h1>
+        <p className="text-sm text-slate-400 mt-1">แหล่งความรู้สำหรับ Hermes AI — URL sources และ knowledge base</p>
       </div>
 
-      {/* ── Obsidian Vault ─────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-          <span>Obsidian Vault</span>
-        </h2>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Sources ทั้งหมด', value: sources.length },
+          { label: 'Indexed แล้ว', value: indexed },
+          { label: 'Chunks ทั้งหมด', value: totalChunks.toLocaleString() },
+        ].map(s => (
+          <div key={s.label} className="card p-5 text-center">
+            <div className="text-3xl font-bold text-orange-600">{s.value}</div>
+            <div className="text-xs text-slate-400 mt-1">{s.label}</div>
+          </div>
+        ))}
+      </div>
 
-        <div className="card p-6 space-y-4">
-          <div className="grid grid-cols-1 gap-4">
-            <ConfigRow
-              label="OBSIDIAN_VAULT_PATH"
-              value={vaultPath}
-              placeholder="ยังไม่ได้ตั้งค่า — ใส่ใน .env.local"
-              ok={!!vaultPath}
+      {/* Add URL */}
+      <div className="card p-6 space-y-4">
+        <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+          <span className="text-lg">🔗</span> เพิ่ม URL Source
+        </h2>
+        <form onSubmit={addSource} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              className={inputCls}
+              placeholder="ชื่อ เช่น กฎหมายแรงงาน"
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              required
             />
-            <ConfigRow
-              label="RAG_INDEX_PATH"
-              value={ragPath}
-              placeholder="rag/index.db (default)"
-              ok
+            <input
+              className={inputCls}
+              placeholder="https://..."
+              value={form.source_url}
+              onChange={e => setForm(f => ({ ...f, source_url: e.target.value }))}
+              type="url"
+              required
             />
           </div>
+          {addError && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>
+          )}
+          <button type="submit" disabled={adding} className="btn-primary text-sm disabled:opacity-50">
+            {adding ? 'กำลังเพิ่ม…' : '+ เพิ่ม URL'}
+          </button>
+        </form>
+      </div>
+
+      {/* Source List */}
+      <div className="card overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-slate-700">URL Sources</h2>
+          <button onClick={loadSources} className="text-xs text-slate-400 hover:text-orange-600 transition-colors">
+            รีเฟรช
+          </button>
         </div>
 
-        <div className="card p-6 space-y-3">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">How to Index Vault</h3>
-          <ol className="space-y-3">
-            {[
-              <>ตั้งค่า <Code>OBSIDIAN_VAULT_PATH</Code> ใน <Code>.env.local</Code> ให้ชี้ไปที่โฟลเดอร์ Obsidian vault</>,
-              <>รันคำสั่ง: <Code>pnpm rag:index</Code> — จะสร้าง SQLite FTS5 index จาก markdown notes ทั้งหมด</>,
-              <>Hermes จะค้น RAG อัตโนมัติเมื่อประมวลผล requirement โดยใช้ keyword search</>,
-              <>อัปเดต index เมื่อเพิ่ม notes ใน Obsidian โดยรัน <Code>pnpm rag:index</Code> ใหม่</>,
-            ].map((step, i) => (
-              <li key={i} className="flex items-start gap-3 text-sm text-slate-700">
-                <span className="size-5 rounded-full bg-orange-100 text-orange-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  {i + 1}
-                </span>
-                <span>{step}</span>
-              </li>
+        {loading ? (
+          <div className="p-8 text-center text-slate-400 text-sm">Loading…</div>
+        ) : sources.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 text-sm">ยังไม่มี source — เพิ่ม URL ด้านบนเลยครับ</div>
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {sources.map(s => (
+              <div key={s.id} className="px-6 py-4 flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-slate-800 truncate">{s.name}</span>
+                    <span className={statusBadge(s.status)}>{s.status}</span>
+                    {s.chunk_count > 0 && (
+                      <span className="text-xs text-slate-400">{s.chunk_count} chunks</span>
+                    )}
+                  </div>
+                  <a
+                    href={s.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-500 hover:underline truncate block mt-0.5 max-w-xs"
+                  >
+                    {s.source_url}
+                  </a>
+                  {s.error_message && (
+                    <p className="text-xs text-red-500 mt-1 truncate">{s.error_message}</p>
+                  )}
+                  {s.last_indexed_at && (
+                    <p className="text-[10px] text-slate-300 mt-0.5">
+                      indexed: {new Date(s.last_indexed_at).toLocaleString('th-TH')}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => indexSource(s.id)}
+                    disabled={indexingId === s.id}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-orange-200 text-orange-600 hover:bg-orange-50 disabled:opacity-40 transition-all"
+                  >
+                    {indexingId === s.id ? 'กำลัง index…' : s.status === 'indexed' ? '🔄 Re-index' : '▶ Index'}
+                  </button>
+                  <button
+                    onClick={() => deleteSource(s.id)}
+                    disabled={deletingId === s.id}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40 transition-all"
+                  >
+                    {deletingId === s.id ? '…' : 'ลบ'}
+                  </button>
+                </div>
+              </div>
             ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* ── URL Sources ────────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">URL Sources</h2>
-        <p className="text-sm text-slate-500">เพิ่ม URL เว็บไซต์หรือ Google Docs link — ระบบจะ fetch และ index เนื้อหาเข้า RAG อัตโนมัติ</p>
-
-        <div className="card p-6">
-          <KnowledgeSourcesList />
-        </div>
-      </section>
-
-      {/* ── Google Drive Folder ────────────────────────────────────── */}
-      <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Google Drive</h2>
-        <p className="text-sm text-slate-500">
-          เชื่อมต่อ Google Drive folder โดยใช้ Service Account — ระบบจะดึงรายชื่อไฟล์จาก folder มาให้เลือก index
-        </p>
-        <GoogleDriveSetup />
-      </section>
-
-      {/* Tech note */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-start gap-3">
-        <SQLiteIcon className="size-4 text-amber-700 shrink-0 mt-0.5" />
-        <p className="text-sm text-amber-800">
-          RAG ใน MVP ใช้ <strong>SQLite FTS5 keyword search</strong> — ไม่ใช้ vector embeddings
-          ซึ่งช่วยให้รันได้ local 100% โดยไม่ต้องพึ่ง OpenAI embeddings API หรือ pgvector
-        </p>
+          </div>
+        )}
       </div>
-    </div>
-  )
-}
 
-function ConfigRow({
-  label, value, placeholder, ok,
-}: {
-  label: string; value: string | null; placeholder: string; ok: boolean
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 p-4 rounded-xl bg-slate-50 border border-slate-100">
-      <div>
-        <p className="text-xs font-semibold text-slate-500 font-mono">{label}</p>
-        <code className="text-xs text-slate-700 font-mono mt-1 block">{value ?? placeholder}</code>
+      {/* Search Test */}
+      <div className="card p-6 space-y-4">
+        <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+          <span className="text-lg">🔍</span> ทดสอบ RAG Search
+        </h2>
+        <div className="flex gap-2">
+          <input
+            className={`${inputCls} flex-1`}
+            placeholder="พิมพ์คำค้นหา เช่น ลาคลอด, สัญญา, ภาษี"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && search()}
+          />
+          <button
+            onClick={search}
+            disabled={searching || !searchQuery.trim()}
+            className="btn-primary text-sm disabled:opacity-50 shrink-0"
+          >
+            {searching ? 'กำลังค้น…' : 'ค้นหา'}
+          </button>
+        </div>
+
+        {searchResults.length > 0 && (
+          <div className="space-y-3">
+            {searchResults.map((r, i) => (
+              <div key={i} className="rounded-xl border border-slate-200 p-4 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full">#{i + 1}</span>
+                  <span className="text-xs font-semibold text-slate-700 truncate">{r.title}</span>
+                </div>
+                <p className="text-xs text-slate-400 truncate">{r.path}</p>
+                <p className="text-sm text-slate-700 leading-relaxed line-clamp-3">{r.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {searchResults.length === 0 && searchQuery && !searching && (
+          <p className="text-xs text-slate-400 text-center py-2">ไม่พบผลลัพธ์</p>
+        )}
       </div>
-      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold shrink-0 mt-0.5 ${ok && value ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-        {ok && value ? 'Set' : 'Not set'}
-      </span>
-    </div>
-  )
-}
 
-function Code({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="font-mono text-xs bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md text-slate-700">
-      {children}
-    </code>
+    </div>
   )
 }
