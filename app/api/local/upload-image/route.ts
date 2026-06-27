@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'fs'
-import path from 'path'
+import { getSupabase } from '@/lib/supabase/admin'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const MAX_SIZE = 10 * 1024 * 1024 // 10MB
+const BUCKET = 'uploads'
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,13 +19,17 @@ export async function POST(req: NextRequest) {
 
     const ext = file.type.split('/')[1].replace('jpeg', 'jpg')
     const filename = `upload_${Date.now()}.${ext}`
-    const outDir = path.join(process.cwd(), 'public', 'generated')
-    fs.mkdirSync(outDir, { recursive: true })
-
     const buffer = Buffer.from(await file.arrayBuffer())
-    fs.writeFileSync(path.join(outDir, filename), buffer)
 
-    return NextResponse.json({ url: `/generated/${filename}`, filename })
+    const sb = getSupabase()
+    const { error } = await sb.storage.from(BUCKET).upload(filename, buffer, {
+      contentType: file.type,
+      upsert: false,
+    })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    const { data: { publicUrl } } = sb.storage.from(BUCKET).getPublicUrl(filename)
+    return NextResponse.json({ url: publicUrl, filename })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
