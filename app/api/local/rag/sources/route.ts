@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
   try {
     const sb = getSupabase()
     const body = await req.json() as { name: string; source_url: string; type?: string; notes?: string }
+    console.log('[rag/sources POST] body:', body)
     if (!body.name || !body.source_url) {
       return NextResponse.json({ error: 'name and source_url required' }, { status: 400 })
     }
@@ -32,9 +33,14 @@ export async function POST(req: NextRequest) {
       status: 'pending', chunk_count: 0, notes: body.notes ?? null,
       created_at: now, updated_at: now,
     } as any)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[rag/sources POST] Supabase error:', error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    console.log('[rag/sources POST] inserted id:', id)
     return NextResponse.json({ id }, { status: 201 })
   } catch (err) {
+    console.error('[rag/sources POST] catch:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         title: content.title ?? null, hook: content.hook ?? null,
         caption: content.caption ?? null, body: content.body ?? null,
         cta: content.cta ?? null, hashtags: content.hashtags ?? null,
-        compliance_note: content.compliance_note ?? null,
+        compliance_note: content.compliance_note ?? 'เนื้อหานี้เป็นข้อมูลทั่วไปเพื่อการศึกษาเท่านั้น ไม่ใช่คำปรึกษาทางกฎหมาย กรุณาปรึกษาทนายความสำหรับกรณีเฉพาะของท่าน',
         status: 'draft', created_at: now, updated_at: now,
       } as any)
     }

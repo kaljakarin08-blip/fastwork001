@@ -45,7 +45,7 @@ export default function RagPage() {
   const [searching, setSearching] = useState(false)
 
   const loadSources = useCallback(async () => {
-    const res = await fetch('/api/local/rag/sources')
+    const res = await fetch('/api/local/rag/sources', { cache: 'no-store' })
     const data = await res.json()
     if (Array.isArray(data)) setSources(data)
     setLoading(false)
@@ -127,6 +127,15 @@ export default function RagPage() {
           RAG / Knowledge
         </h1>
         <p className="text-sm text-slate-400 mt-1">แหล่งความรู้สำหรับ Hermes AI — URL sources และ knowledge base</p>
+      </div>
+
+      {/* Re-index reminder */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+        <span className="text-amber-500 text-base shrink-0 mt-0.5">💡</span>
+        <div>
+          <p className="text-xs font-semibold text-amber-800">เมื่อมีกฎหมายใหม่หรือข้อมูลอัปเดต</p>
+          <p className="text-xs text-amber-700 mt-0.5">กด <span className="font-bold">🔄 Re-index</span> ที่ URL source นั้น เพื่อให้ Hermes AI ใช้ข้อมูลล่าสุดในการสร้าง content</p>
+        </div>
       </div>
 
       {/* Stats */}

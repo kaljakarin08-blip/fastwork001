@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
 
     const ragChunks = (sb as any).from('rag_chunks')
     const { error: deleteError } = await ragChunks.delete().eq('source_id', id)
-    if (deleteError) throw deleteError
+    if (deleteError) throw new Error(deleteError.message ?? JSON.stringify(deleteError))
 
     const { error: insertError } = await ragChunks.insert(
       chunks.map((chunk) => ({
@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
         created_at: now,
       }))
     )
-    if (insertError) throw insertError
+    if (insertError) throw new Error(insertError.message ?? JSON.stringify(insertError))
 
     await sb.from('knowledge_sources').update({ status: 'indexed', chunk_count: chunks.length, last_indexed_at: now, error_message: null, updated_at: now }).eq('id', id)
     return NextResponse.json({ ok: true, chunks: chunks.length, title })

@@ -115,8 +115,9 @@ async function callLLM(opts: {
   user: string | MsgImageContent[]
   openaiKey: string
   anthropicKey: string
+  maxTokens?: number
 }): Promise<string> {
-  const { model, system, user, openaiKey, anthropicKey } = opts
+  const { model, system, user, openaiKey, anthropicKey, maxTokens } = opts
 
   // ── Anthropic (Claude) ──────────────────────────────────────────────────
   if (model.startsWith('claude-')) {
@@ -126,7 +127,6 @@ async function callLLM(opts: {
     if (typeof user === 'string') {
       userContent = user
     } else {
-      // Map OpenAI multimodal format → Anthropic format
       userContent = user.map(c => {
         if (c.type === 'text') return { type: 'text' as const, text: c.text }
         return {
@@ -138,7 +138,7 @@ async function callLLM(opts: {
 
     const res = await client.messages.create({
       model,
-      max_tokens: 4096,
+      max_tokens: maxTokens ?? 4096,
       system,
       messages: [{ role: 'user', content: userContent }],
     })
@@ -149,7 +149,7 @@ async function callLLM(opts: {
 
   // ── OpenAI (gpt-4o, gpt-4.1, o3, o4-mini, …) ──────────────────────────
   const openai = new OpenAI({ apiKey: openaiKey })
-  const isOSeries = /^o\d/.test(model) // o3, o4-mini, o4-mini-high, etc.
+  const isOSeries = /^o\d/.test(model)
 
   const params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
     model,
@@ -163,6 +163,7 @@ async function callLLM(opts: {
       },
     ],
     response_format: { type: 'json_object' },
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
   }
   if (!isOSeries) params.temperature = 0.7
 
@@ -274,13 +275,24 @@ export async function processJob(job: Record<string, unknown>, requirement: Reco
   const openaiKey = brand.openaiKey
   const llm = (system: string, user: string | MsgImageContent[]) =>
     callLLM({ model: brand.model, system, user, openaiKey, anthropicKey: brand.anthropicKey })
+  // High-token variant for content generation (body 1000–1500 คำ needs ~8k+ tokens)
+  const llmLong = (system: string, user: string | MsgImageContent[]) =>
+    callLLM({ model: brand.model, system, user, openaiKey, anthropicKey: brand.anthropicKey, maxTokens: 16000 })
 
   await updateJobStatus(jobId, 'running', undefined, appUrl)
 
+  // Thai law keyword list — topics matching any of these skip LLM guard
+  const LAW_KEYWORDS = [
+    'กฎหมาย', 'ภาษี', 'สัญญา', 'มรดก', 'อาญา', 'แพ่ง', 'พาณิชย์', 'แรงงาน',
+    'อสังหา', 'ทรัพย์สิน', 'ลิขสิทธิ์', 'ธุรกิจ', 'บริษัท', 'หุ้นส่วน', 'ศาล',
+    'คดี', 'ฟ้อง', 'สิทธิ', 'ความผิด', 'โทษ', 'พินัยกรรม', 'ค้ำประกัน',
+    'จำนอง', 'เช่า', 'ซื้อขาย', 'ประกัน', 'ละเมิด', 'ทายาท',
+  ]
+
   try {
-    // Step 1: Auto-topic from RAG if topic is empty
+    // ── Step 1: Resolve topic ─────────────────────────────────────────────
     if (!requirement.topic) {
-      const categoryLine = String(requirement.brief ?? '').match(/หมวดหมู่กฎหมาย: (.+)/)?.[1] ?? ''
+      const categoryLine = String(requirement.brief ?? '').match(/หมวดหมู่กฎหมาย: (.+)/)?.[1]?.trim() ?? ''
       if (!categoryLine) {
         await updateJobStatus(jobId, 'failed', 'Missing topic — กรุณาใส่ Topic หรือเลือกหมวดหมู่กฎหมาย', appUrl)
         await updateReqStatus(reqId, 'failed', appUrl)
@@ -293,29 +305,40 @@ export async function processJob(job: Record<string, unknown>, requirement: Reco
         body: JSON.stringify({ query: categoryLine, limit: 10 }),
       }).catch(() => null)
       const autoNotes: Array<{ title: string; score: number }> = autoRes?.ok ? await autoRes.json() : []
-      if (!autoNotes.length) {
-        await updateJobStatus(jobId, 'failed', 'Auto-topic: ไม่พบข้อมูลใน RAG vault สำหรับหมวดหมู่นี้ — รัน pnpm rag:index หลังเพิ่มข้อมูลใน Obsidian', appUrl)
-        await updateReqStatus(reqId, 'needs_research', appUrl)
-        return
-      }
-      requirement.topic = autoNotes[0].title
+      // RAG hit → use note title; miss → fall back to category name (still a valid law topic)
+      requirement.topic = autoNotes.length > 0 ? autoNotes[0].title : categoryLine
       await fetch(`${appUrl}/api/local/requirements/${reqId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: requirement.topic }),
       }).catch(() => null)
-      console.log(`[hermes] Auto-topic: "${requirement.topic}"`)
+      console.log(`[hermes] Topic resolved (${autoNotes.length > 0 ? 'RAG' : 'category'}): "${requirement.topic}"`)
     }
 
+    // ── Step 2: Fetch URL content (if provided) ───────────────────────────
     let urlContent = ''
     const sourceUrl = String(requirement.source_url ?? '')
     if (sourceUrl.startsWith('http')) {
       urlContent = await fetchUrlContent(sourceUrl)
     }
 
-    const guardRaw = await llm(
-      `คุณเป็น gatekeeper + layout advisor สำหรับ AI Content ของสำนักงานกฎหมาย
-ตรวจสอบว่า topic เกี่ยวกับ (1) กฎหมายไทย หรือ (2) legal content เท่านั้น
+    // ── Step 3: Topic guard + layout advisor ──────────────────────────────
+    // If topic clearly contains Thai law keywords → skip LLM guard entirely (saves API call)
+    // Otherwise → ask LLM to validate + suggest layout
+    const topic = String(requirement.topic)
+    const isLawTopic = LAW_KEYWORDS.some(kw => topic.includes(kw))
+
+    let guardResult: { ok: boolean; reason?: string; suggested_layout?: string; layout_reason?: string } = {
+      ok: true,
+      suggested_layout: DEFAULT_LAYOUT,
+    }
+
+    if (isLawTopic) {
+      console.log(`[hermes] Guard: keyword match → pass "${topic}"`)
+    } else {
+      const guardRaw = await llm(
+        `คุณเป็น layout advisor สำหรับ AI Content ของสำนักงานกฎหมาย
+ตรวจสอบว่า topic เกี่ยวกับ (1) กฎหมายไทย หรือ (2) legal content — ชื่อหมวดหมู่กฎหมายก็ถือว่า ok
 พร้อม suggest layout ที่เหมาะสม
 
 Layout ที่มี:
@@ -327,21 +350,17 @@ Layout ที่มี:
 
 ตอบ JSON เท่านั้น:
 { "ok": true, "reason": "...", "suggested_layout": "feed_square", "layout_reason": "เหตุผลสั้น" }`,
-      `Topic: ${requirement.topic}
+        `Topic: ${topic}
 Brief: ${String(requirement.brief ?? '').slice(0, 300)}
 ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
-    ).catch(() => '{"ok":true,"reason":"guard_error","suggested_layout":"feed_square","layout_reason":"default"}')
-
-    let guardResult: { ok: boolean; reason?: string; suggested_layout?: string; layout_reason?: string } = {
-      ok: true,
-      suggested_layout: DEFAULT_LAYOUT,
+      ).catch(() => '{"ok":true,"reason":"guard_error","suggested_layout":"feed_square","layout_reason":"default"}')
+      try { guardResult = JSON.parse(guardRaw) } catch { /* keep default ok:true */ }
     }
-    try { guardResult = JSON.parse(guardRaw) } catch { /* pass */ }
 
     if (!guardResult.ok) {
       await updateJobStatus(jobId, 'failed', `off_topic: ${guardResult.reason ?? 'ไม่เกี่ยวกับกฎหมาย'}`, appUrl)
       await updateReqStatus(reqId, 'failed', appUrl)
-      console.log(`[hermes] 🚫 Rejected off-topic: "${requirement.topic}" — ${guardResult.reason}`)
+      console.log(`[hermes] 🚫 Rejected: "${topic}" — ${guardResult.reason}`)
       return
     }
 
@@ -351,7 +370,7 @@ ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
     const layoutSpec = LAYOUT_SPEC[suggestedLayoutKey] ?? LAYOUT_SPEC[DEFAULT_LAYOUT]
     console.log(`[hermes] Layout: ${suggestedLayoutKey} — ${guardResult.layout_reason ?? ''}`)
 
-    // Step 3: RAG Search
+    // Step 4: RAG Search
     await updateReqStatus(reqId, 'rag_searching', appUrl)
     const ragRes = await fetch(`${appUrl}/api/local/rag/search`, {
       method: 'POST',
@@ -375,18 +394,48 @@ ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
 
     // Step 4: Generate Content
     await updateReqStatus(reqId, 'content_generating', appUrl)
+    // Topic has already passed the guard above — content LLM must generate, not reject
     const contentSystemPrompt = brand.systemPrompt ||
       `คุณเป็น content writer ประจำ${brand.firmName} ผู้เชี่ยวชาญกฎหมายไทย
-หน้าที่: เขียน Facebook post เกี่ยวกับกฎหมายไทยเท่านั้น อ้างอิงจาก RAG Sources ที่ให้มา
-กฎเหล็ก: ห้ามสร้าง content นอกเรื่องกฎหมาย ถ้า topic ไม่เกี่ยวกับกฎหมายให้ตอบ { "error": "off_topic" }
+หน้าที่: เขียน Facebook post เกี่ยวกับกฎหมายไทย อ้างอิงจาก RAG Sources ที่ให้มา (ถ้าไม่มี RAG ให้ใช้ความรู้กฎหมายทั่วไป)
 ตอบกลับเป็น JSON ตามรูปแบบที่กำหนด ไม่อ้างกฎหมายแน่นอนเกินจริง`
-    const contentRaw = await llm(contentSystemPrompt, buildContentPrompt(requirement, combinedContext, brand))
+    const contentRaw = await llmLong(contentSystemPrompt, buildContentPrompt(requirement, combinedContext, brand))
     const content = JSON.parse(contentRaw)
-    if (content.error === 'off_topic') {
-      await updateJobStatus(jobId, 'failed', 'off_topic: LLM ปฏิเสธ — topic ไม่เกี่ยวกับกฎหมาย', appUrl)
-      await updateReqStatus(reqId, 'failed', appUrl)
-      console.log(`[hermes] 🚫 LLM rejected off-topic: "${requirement.topic}"`)
-      return
+
+    // ── Word count verification & expansion pass (max 2 rounds) ─────────
+    const targetWc = parseInt(String(requirement.brief ?? '').match(/ความยาวเนื้อหา: (\d+) คำ/)?.[1] ?? '0')
+    if (targetWc > 0) {
+      const minChars = targetWc * 4 // Thai: 1 คำ ≈ 4 chars
+      for (let pass = 1; pass <= 2; pass++) {
+        const bodyChars = String(content.body ?? '').replace(/\s/g, '').length
+        if (bodyChars >= minChars) break
+        console.log(`[hermes] Pass ${pass}: body ${bodyChars} chars < ${minChars} required — expanding…`)
+        const still = minChars - bodyChars
+        const expandRaw = await llmLong(
+          contentSystemPrompt,
+          `เนื้อหาด้านล่างนี้ยังสั้นเกินไป (${bodyChars} ตัวอักษร) ต้องการอีก ${still} ตัวอักษร (รวมเป้าหมาย ${minChars})
+กรุณา EXPAND body โดย:
+- ขยายทุก section ให้ละเอียดขึ้น
+- เพิ่มตัวอย่าง กรณีศึกษา สถานการณ์จริง
+- เพิ่ม step-by-step ที่ชัดเจน
+- เพิ่มข้อควรระวัง / FAQ / ข้อแนะนำเพิ่มเติม
+
+body ปัจจุบัน:
+${content.body}
+
+ตอบกลับเป็น JSON: { "body": "เนื้อหาที่ขยายแล้ว — ต้องยาวกว่าเดิมอย่างน้อย ${still} ตัวอักษร" }`
+        ).catch(() => null)
+        if (!expandRaw) break
+        try {
+          const expanded = JSON.parse(expandRaw)
+          if (expanded.body && String(expanded.body).replace(/\s/g,'').length > bodyChars) {
+            content.body = expanded.body
+            console.log(`[hermes] Pass ${pass} done: ${String(content.body).replace(/\s/g,'').length} chars`)
+          }
+        } catch { break }
+      }
+      const finalChars = String(content.body ?? '').replace(/\s/g,'').length
+      console.log(`[hermes] Final body: ${finalChars}/${minChars} chars (${Math.round(finalChars/minChars*100)}%)`)
     }
 
     // Step 5: Generate Image Prompt
@@ -591,7 +640,19 @@ ${ctaLine ? `CTA ที่ต้องการ: ${ctaLine}` : ''}
 Target Audience: ${req.target_audience ?? 'เจ้าของธุรกิจและประชาชนทั่วไป'}
 Tone: ${req.tone ?? 'professional'}
 Objective: ${req.objective ?? 'ให้ความรู้'}
-${targetWordCount ? `ความยาวเนื้อหา body: อย่างน้อย ${targetWordCount} คำ — body ต้องมีความยาวถึงเกณฑ์นี้ ห้ามสั้นกว่า` : 'ความยาวเนื้อหา body: อย่างน้อย 800 คำ'}
+${(() => {
+    const wc = targetWordCount ?? 800
+    // Thai: 1 คำ ≈ 4 chars → multiply to get minimum character target
+    const minChars = wc * 4
+    return `ความยาวเนื้อหา body: อย่างน้อย ${wc} คำ (≈ ${minChars} ตัวอักษรภาษาไทย)
+⚠️ กฎเหล็ก: body ต้องมีความยาวไม่ต่ำกว่า ${minChars} ตัวอักษร — ห้ามส่งสั้นกว่านี้
+โครงสร้าง body ที่แนะนำ (เพื่อให้ได้ความยาวตามกำหนด):
+1. บทนำ — อธิบาย topic ทำไมถึงสำคัญ (${Math.round(wc*0.15)} คำ)
+2. เนื้อหาหลัก 3-5 หัวข้อย่อย แต่ละหัวข้ออธิบายละเอียด (${Math.round(wc*0.55)} คำ)
+3. ตัวอย่างจริง / กรณีศึกษา (${Math.round(wc*0.15)} คำ)
+4. ข้อควรระวัง / สิ่งที่ต้องทำ (${Math.round(wc*0.1)} คำ)
+5. สรุป (${Math.round(wc*0.05)} คำ)`
+  })()}
 ${doNotLine ? `ห้ามพูดถึง: ${doNotLine}` : ''}
 
 ${blueprintText ? `═══ BLUEPRINT ═══\n${blueprintText}` : ''}

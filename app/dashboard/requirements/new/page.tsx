@@ -471,6 +471,7 @@ export default function NewRequirementPage() {
   const [error, setError] = useState('')
   const [postCount, setPostCount] = useState(1)
 
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [lawCategories, setLawCategories] = useState<LawCategoryId[]>([])
   const [tones, setTones] = useState<ToneId[]>(['professional'])
   const [contentGoals, setContentGoals] = useState<ContentGoalId[]>([])
@@ -650,9 +651,9 @@ export default function NewRequirementPage() {
           className="text-3xl font-bold mt-2 mb-1"
           style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#0F172A' }}
         >
-          New Content Brief
+          สร้าง Content
         </h1>
-        <p className="text-sm text-slate-400">กรอก brief นี้เพื่อให้ Hermes AI สร้างคอนเทนต์กฎหมายที่ถูกต้อง</p>
+        <p className="text-sm text-slate-400">เลือกหมวดหมู่ — Hermes AI จะสร้างเนื้อหาให้อัตโนมัติ</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -675,10 +676,12 @@ export default function NewRequirementPage() {
                     onClick={() => toggleLaw(cat.id)}
                     className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-left transition-all"
                     style={{
-                      borderColor: active ? cat.color : '#E2E8F0',
+                      borderTopColor: active ? cat.color : '#E2E8F0',
+                      borderRightColor: active ? cat.color : '#E2E8F0',
+                      borderBottomColor: active ? cat.color : '#E2E8F0',
+                      borderLeftColor: cat.color,
                       backgroundColor: active ? `${cat.color}12` : 'white',
                       borderLeftWidth: 3,
-                      borderLeftColor: cat.color,
                     }}
                   >
                     <span style={{ color: active ? cat.color : '#94A3B8' }}>{cat.icon}</span>
@@ -791,6 +794,51 @@ export default function NewRequirementPage() {
             />
           </Field>
         </Section>
+
+        {/* ── Quick: Batch count + FB account ── */}
+        <div className="card p-5 space-y-4">
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">จำนวน Content ที่สร้าง</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex rounded-xl border border-slate-200 overflow-hidden">
+                {[1, 2, 3, 5, 7, 10].map((n) => (
+                  <button key={n} type="button" onClick={() => setPostCount(n)}
+                    className={`px-4 py-2 text-sm font-semibold transition-colors min-w-[42px] ${postCount === n ? 'bg-orange-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-slate-400">
+                {postCount === 1 ? '1 โพส' : `${postCount} โพสแยกกัน`}
+              </span>
+            </div>
+          </div>
+          {fbAccounts.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Facebook Page <span className="font-normal normal-case text-slate-400">(เลือกทีหลังตอน Approve ก็ได้)</span></p>
+              <select className={inputCls} value={form.facebook_account_id} onChange={(e) => set('facebook_account_id', e.target.value)}>
+                <option value="">— เลือก Page —</option>
+                {fbAccounts.map((fa) => (
+                  <option key={fa.id} value={fa.id}>{fa.page_name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* ── Advanced toggle ── */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(s => !s)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-xs font-semibold text-slate-500 hover:border-orange-400 hover:text-orange-600 transition-all"
+        >
+          <svg viewBox="0 0 16 16" className={`size-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          {showAdvanced ? 'ซ่อนตัวเลือกเพิ่มเติม' : 'ตั้งค่าเพิ่มเติม (Tone · Strategy · Image · Schedule)'}
+        </button>
+
+        {showAdvanced && <>
 
         {/* ── B. Strategy ── */}
         <Section
@@ -1183,70 +1231,13 @@ export default function NewRequirementPage() {
           )}
         </Section>
 
-        {/* ── G. Destination ── */}
+        {/* ── G. Schedule ── (FB moved to quick card above) ── */}
         <Section
           step="G"
-          title="Facebook Destination"
-          subtitle="เลือก Page ที่จะโพส"
-          accent="#1877F2"
-        >
-          <Field label="Facebook Page" hint="เลือกตอนนี้หรือเลือกทีหลังตอน Approve ก็ได้">
-            <select
-              className={inputCls}
-              value={form.facebook_account_id}
-              onChange={(e) => set('facebook_account_id', e.target.value)}
-            >
-              <option value="">— เลือก Facebook Page —</option>
-              {fbAccounts.map((fa) => (
-                <option key={fa.id} value={fa.id}>
-                  {fa.account_name} — {fa.page_name}
-                </option>
-              ))}
-            </select>
-            {fbAccounts.length === 0 && (
-              <p className="text-xs text-amber-600 mt-1.5">
-                ยังไม่มี Facebook account —{' '}
-                <a href="/dashboard/facebook-accounts" className="underline font-medium">
-                  เพิ่มก่อน
-                </a>
-              </p>
-            )}
-          </Field>
-        </Section>
-
-        {/* ── H. Batch & Schedule ── */}
-        <Section
-          step="H"
-          title="Batch & Schedule"
-          subtitle="จำนวนและวันเวลาที่ต้องการโพส"
+          title="กำหนดเวลาโพส"
+          subtitle="วันเวลาที่ต้องการ (ไม่กรอกก็ได้ — ตั้งทีหลังตอน Approve)"
           accent="#D97706"
         >
-          <Field label="จำนวนคอนเทนต์ที่สร้าง" hint="Hermes จะสร้าง requirement แยกสำหรับแต่ละโพส">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex rounded-xl border border-slate-200 overflow-hidden">
-                {[1, 2, 3, 5, 7, 10].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setPostCount(n)}
-                    className={`px-3.5 py-2 text-sm font-semibold transition-colors min-w-[40px] ${
-                      postCount === n
-                        ? 'bg-orange-600 text-white'
-                        : 'bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-              <span className="text-xs text-slate-500">
-                {postCount === 1
-                  ? '1 requirement → 1 โพส'
-                  : `${postCount} requirements → ${postCount} โพสแยกกัน`}
-              </span>
-            </div>
-          </Field>
-
           <div className="grid grid-cols-3 gap-4">
             <Field label="วันที่ต้องการโพส">
               <input
@@ -1292,6 +1283,8 @@ export default function NewRequirementPage() {
             />
           </Field>
         </Section>
+
+        </> /* end showAdvanced */}
 
         {/* Error */}
         {error && (

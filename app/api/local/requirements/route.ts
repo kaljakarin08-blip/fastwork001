@@ -9,9 +9,13 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status')
     const facebook_account_id = searchParams.get('facebook_account_id')
 
+    const includeContent = searchParams.get('includeContent') === 'true'
+
     let query = sb
       .from('requirements')
-      .select('*, facebook_accounts(page_name)')
+      .select(includeContent
+        ? '*, facebook_accounts(page_name), content_outputs(hook, body, title)'
+        : '*, facebook_accounts(page_name)')
       .order('created_at', { ascending: false })
       .limit(100)
 
@@ -22,11 +26,20 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     const data = rawData as any[] | null
-    const rows = (data ?? []).map((r: any) => ({
-      ...r,
-      fb_page_name: (r.facebook_accounts as { page_name?: string } | null)?.page_name ?? null,
-      facebook_accounts: undefined,
-    }))
+    const rows = (data ?? []).map((r: any) => {
+      const contentArr = r.content_outputs as any[] | null
+      const firstContent = contentArr?.[0] ?? null
+      return {
+        ...r,
+        fb_page_name: (r.facebook_accounts as { page_name?: string } | null)?.page_name ?? null,
+        facebook_accounts: undefined,
+        content_hook: firstContent?.hook ?? null,
+        content_body_preview: firstContent?.body
+          ? String(firstContent.body).slice(0, 120) + (firstContent.body.length > 120 ? '…' : '')
+          : null,
+        content_outputs: undefined,
+      }
+    })
 
     return NextResponse.json(rows)
   } catch (err) {

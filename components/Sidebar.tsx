@@ -18,14 +18,11 @@ const contentItems = [
 
 const systemItems = [
   { href: '/dashboard/facebook-accounts', label: 'FB Accounts', icon: FacebookIcon },
-  { href: '/dashboard/rag', label: 'RAG / Vault', icon: BookOpen },
-  { href: '/dashboard/logs', label: 'Logs', icon: ScrollText },
+  { href: '/dashboard/rag', label: 'Knowledge Vault', icon: BookOpen },
 ]
 
 const settingsItems = [
   { href: '/dashboard/settings/brand', label: 'Brand Profile', icon: Building2 },
-  { href: '/dashboard/settings/api-keys', label: 'API Keys', icon: Key },
-  { href: '/dashboard/settings/creative-profiles', label: 'Creative Profiles', icon: Palette },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings2 },
 ]
 
@@ -146,19 +143,13 @@ export default function Sidebar() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
               </span>
-              <span className="text-[10px] text-emerald-500 font-medium">local</span>
+              <span className="text-[10px] text-emerald-500 font-medium">พร้อมใช้งาน</span>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mb-2">
+          <div className="flex items-center gap-1.5">
             <SQLiteIcon className="size-3 text-gray-500" />
-            <span className="text-[10px] text-gray-500">SQLite · FTS5 RAG</span>
+            <span className="text-[10px] text-gray-500">ระบบ AI · ฐานข้อมูลกฎหมาย</span>
           </div>
-          <code
-            className="text-[10px] font-mono px-2 py-1 rounded-md block"
-            style={{ background: '#111827', color: '#C9A227' }}
-          >
-            pnpm hermes
-          </code>
         </div>
       </div>
     </aside>

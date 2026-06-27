@@ -38,12 +38,10 @@ export default async function RequirementsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="th">Topic / Title</th>
-              <th className="th">FB Account</th>
-              <th className="th">Type</th>
-              <th className="th">Video</th>
+              <th className="th">หัวข้อ / Content</th>
+              <th className="th">FB Page</th>
               <th className="th">Status</th>
-              <th className="th">Date</th>
+              <th className="th">วันที่โพสต์</th>
               <th className="th">Priority</th>
             </tr>
           </thead>
@@ -58,53 +56,59 @@ export default async function RequirementsPage() {
                 </td>
               </tr>
             ) : (
-              requirements.map((req) => (
-                <tr key={req.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3.5">
-                    <Link
-                      href={`/dashboard/requirements/${req.id}`}
-                      className="font-semibold text-slate-900 hover:text-orange-600 transition-colors"
-                    >
-                      {req.title || req.topic}
-                    </Link>
-                    {req.topic !== req.title && req.title && (
-                      <div className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">{req.topic}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5 text-slate-600 text-sm">
-                    {(req as Requirement & { fb_page_name?: string }).fb_page_name ?? (
-                      <span className="text-red-400 text-xs font-medium">ยังไม่เลือก</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium">
-                      {req.content_type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    {req.video_create ? (
-                      <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full font-medium">Video</span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className={`badge ${statusColor(req.status)}`}>{statusLabel(req.status)}</span>
-                  </td>
-                  <td className="px-4 py-3.5 text-xs text-slate-400 font-mono">
-                    {req.preferred_post_date ?? <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    {req.priority === 'urgent' ? (
-                      <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Urgent</span>
-                    ) : req.priority === 'high' ? (
-                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">High</span>
-                    ) : (
-                      <span className="text-xs text-slate-400 capitalize">{req.priority}</span>
-                    )}
-                  </td>
-                </tr>
-              ))
+              requirements.map((req) => {
+                const domainTag = String((req as Requirement & { domain?: string }).domain ?? '')
+                const domainBadge = domainTag === 'accounting'
+                  ? { emoji: '📊', label: 'บัญชี', cls: 'bg-emerald-100 text-emerald-700' }
+                  : { emoji: '⚖️', label: 'กฎหมาย', cls: 'bg-blue-100 text-blue-700' }
+                const fbPageName = (req as Requirement & { fb_page_name?: string }).fb_page_name
+                const isReady = req.status === 'output_ready' || req.status === 'approved' || req.status === 'scheduled'
+                return (
+                  <tr key={req.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3.5">
+                      <div className="flex items-start gap-2">
+                        <span className={`mt-0.5 shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${domainBadge.cls}`}>
+                          {domainBadge.emoji} {domainBadge.label}
+                        </span>
+                        <div className="min-w-0">
+                          <Link
+                            href={`/dashboard/requirements/${req.id}`}
+                            className="font-semibold text-slate-900 hover:text-orange-600 transition-colors"
+                          >
+                            {req.title || req.topic}
+                          </Link>
+                          {req.topic !== req.title && req.title && (
+                            <div className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">{req.topic}</div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-600 text-sm">
+                      {fbPageName
+                        ? fbPageName
+                        : isReady
+                          ? <span className="text-slate-300 text-xs">—</span>
+                          : <span className="text-slate-400 text-xs">ยังไม่เลือก</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <span className={`badge ${statusColor(req.status)}`}>{statusLabel(req.status)}</span>
+                    </td>
+                    <td className="px-4 py-3.5 text-xs text-slate-400 font-mono">
+                      {req.preferred_post_date ?? <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3.5">
+                      {req.priority === 'urgent' ? (
+                        <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Urgent</span>
+                      ) : req.priority === 'high' ? (
+                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">High</span>
+                      ) : (
+                        <span className="text-xs text-slate-400 capitalize">{req.priority}</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>

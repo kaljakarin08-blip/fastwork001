@@ -1,5 +1,6 @@
 import { statusLabel, statusColor } from '@/lib/utils'
 import type { Job, Requirement } from '@/types'
+import ProcessAllButton from './ProcessAllButton'
 
 async function getQueue(): Promise<Array<{ job: Job; requirement: Requirement }>> {
   try {
@@ -29,6 +30,7 @@ async function getAllJobs(): Promise<Job[]> {
 
 export default async function QueuePage() {
   const [queue, jobs] = await Promise.all([getQueue(), getAllJobs()])
+  const failedCount = jobs.filter(j => j.status === 'failed').length
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
@@ -36,17 +38,23 @@ export default async function QueuePage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#111827' }}>Queue</h1>
-          <p className="text-sm text-gray-500 mt-1">Hermes job queue — {queue.length} pending</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Hermes job queue — {queue.length} pending
+            {failedCount > 0 && <span className="text-red-400 ml-2">· {failedCount} failed</span>}
+          </p>
         </div>
-        {queue.length > 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
-            <span className="relative flex size-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-              <span className="relative inline-flex rounded-full size-1.5 bg-blue-500" />
+        <div className="flex items-center gap-3">
+          {queue.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+              <span className="relative flex size-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex rounded-full size-1.5 bg-blue-500" />
+              </span>
+              {queue.length} pending
             </span>
-            {queue.length} pending
-          </span>
-        )}
+          )}
+          <ProcessAllButton count={queue.length} failedCount={failedCount} />
+        </div>
       </div>
 
       {/* Pending Jobs */}

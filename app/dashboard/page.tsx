@@ -36,7 +36,7 @@ export default async function DashboardPage() {
           <h1 className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#111827' }}>
             Content Overview
           </h1>
-          <p className="text-sm text-gray-500 mt-1.5">Law AI Content OS — Local-First Production</p>
+          <p className="text-sm text-gray-500 mt-1.5">ระบบสร้าง Content อัตโนมัติ</p>
         </div>
         <Link href="/dashboard/requirements/new" className="btn-gold">
           + New Requirement
@@ -124,16 +124,36 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Hermes Note */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-start gap-3">
-        <div className="size-2 mt-1.5 rounded-full bg-amber-400 shrink-0" />
-        <p className="text-sm text-amber-800">
-          <span className="font-semibold">Hermes Worker</span> ต้องรันบน local machine —{' '}
-          <code className="font-mono bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded text-xs">
-            pnpm hermes
-          </code>{' '}
-          จะ poll queue ทุก 45 วินาทีอัตโนมัติ
-        </p>
+      {/* System Status */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center gap-3">
+          <span className="relative flex size-2 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+          </span>
+          <div>
+            <p className="text-xs font-semibold text-emerald-800">ระบบ AI พร้อมใช้งาน</p>
+            <p className="text-[11px] text-emerald-600">Hermes Worker · ทำงานอัตโนมัติ</p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex items-center gap-3">
+          <span className="relative flex size-2 shrink-0">
+            <span className="relative inline-flex rounded-full size-2 bg-blue-400" />
+          </span>
+          <div>
+            <p className="text-xs font-semibold text-blue-800">ฐานข้อมูลความรู้</p>
+            <p className="text-[11px] text-blue-600">Knowledge Vault · RAG พร้อม</p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex items-center gap-3">
+          <span className="relative flex size-2 shrink-0">
+            <span className="relative inline-flex rounded-full size-2 bg-slate-400" />
+          </span>
+          <div>
+            <p className="text-xs font-semibold text-slate-700">บันทึกอัตโนมัติ</p>
+            <p className="text-[11px] text-slate-500">ข้อมูลเก็บบนเครื่องของคุณ</p>
+          </div>
+        </div>
       </div>
     </div>
   )
