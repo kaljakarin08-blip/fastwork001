@@ -6,5 +6,5 @@ electron-dist
 *.db
 .env.local
 electron
-rag
-scripts
+/rag
+/scripts
