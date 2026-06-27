@@ -23,7 +23,7 @@ export async function GET() {
     const { data } = await sb.from('brand_profile').select('*').eq('id', 'default').single()
     if (!data) return NextResponse.json({ id: 'default', ...BRAND_DEFAULTS })
     // Fill null/invalid fields with defaults
-    const merged = { ...data }
+    const merged: Record<string, unknown> = { ...data }
     for (const [k, v] of Object.entries(BRAND_DEFAULTS)) {
       if (merged[k] == null) merged[k] = v
     }
