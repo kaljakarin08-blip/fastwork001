@@ -302,7 +302,39 @@ export async function processJob(job: Record<string, unknown>, requirement: Reco
     const sourceUrl = String(requirement.source_url ?? '')
     if (sourceUrl.startsWith('http')) {
       urlContent = await fetchUrlContent(sourceUrl)
-      console.log(`[hermes] URL fetched: ${sourceUrl.slice(0, 60)}… (${urlContent.length} chars)`)
+      console.log(`[hermes] URL fetched (manual): ${sourceUrl.slice(0, 60)}… (${urlContent.length} chars)`)
+    }
+
+    // ── Step 1.5: Category URL fallback ──────────────────────────────────
+    // ถ้าไม่มี source_url → ดึง URL จาก knowledge_sources ที่ทนาย tag law_category ไว้
+    if (!urlContent) {
+      const briefStr = String(requirement.brief ?? '')
+      const reqCategory = briefStr.match(/หมวดหมู่กฎหมาย: (.+)/)?.[1]?.split(',')[0]?.trim() ?? ''
+      if (reqCategory) {
+        try {
+          const sb = getSupabase()
+          const { data: catSources } = await sb
+            .from('knowledge_sources')
+            .select('source_url, name')
+            .eq('law_category', reqCategory)
+            .eq('status', 'indexed')
+            .limit(3)
+
+          if (catSources && catSources.length > 0) {
+            console.log(`[hermes] Category fallback URLs for "${reqCategory}": ${catSources.length} source(s)`)
+            const fetched = await Promise.all(
+              catSources.map(async (s: { source_url: string; name: string }) => {
+                const content = await fetchUrlContent(s.source_url).catch(() => '')
+                return content ? `=== ${s.name} ===\n${content}` : ''
+              })
+            )
+            urlContent = fetched.filter(Boolean).join('\n\n').slice(0, 12000)
+            console.log(`[hermes] Category URL content: ${urlContent.length} chars`)
+          }
+        } catch (err) {
+          console.warn('[hermes] Category URL fallback failed:', err)
+        }
+      }
     }
 
     if (!requirement.topic) {

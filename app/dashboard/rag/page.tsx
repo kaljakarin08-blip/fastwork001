@@ -2,11 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
+const LAW_CATEGORIES = [
+  'กฎหมายบริษัท', 'ภาษีและบัญชี', 'อสังหาริมทรัพย์', 'แรงงาน',
+  'สัญญา', 'อาญา', 'ครอบครัว/มรดก', 'ทรัพย์สินทางปัญญา',
+  'คดีความ/ฟ้องร้อง', 'การเงิน/หลักทรัพย์', 'วีซ่า/คนเข้าเมือง', 'สิ่งแวดล้อม/ผังเมือง',
+]
+
 type KnowledgeSource = {
   id: string
   name: string
   source_url: string
   type: string
+  law_category: string | null
   status: 'pending' | 'indexing' | 'indexed' | 'error'
   chunk_count: number
   error_message: string | null
@@ -35,7 +42,7 @@ function statusBadge(status: string) {
 export default function RagPage() {
   const [sources, setSources] = useState<KnowledgeSource[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ name: '', source_url: '' })
+  const [form, setForm] = useState({ name: '', source_url: '', law_category: '' })
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState('')
   const [indexingId, setIndexingId] = useState<string | null>(null)
@@ -62,11 +69,11 @@ export default function RagPage() {
       const res = await fetch('/api/local/rag/sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, source_url: form.source_url }),
+        body: JSON.stringify({ name: form.name, source_url: form.source_url, law_category: form.law_category || null }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      setForm({ name: '', source_url: '' })
+      setForm({ name: '', source_url: '', law_category: '' })
       await loadSources()
     } catch (err) {
       setAddError(String(err))
@@ -161,7 +168,7 @@ export default function RagPage() {
           <div className="grid grid-cols-2 gap-3">
             <input
               className={inputCls}
-              placeholder="ชื่อ เช่น กฎหมายแรงงาน"
+              placeholder="ชื่อ เช่น ค่าจ้างขั้นต่ำ 2567"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               required
@@ -175,6 +182,17 @@ export default function RagPage() {
               required
             />
           </div>
+          <select
+            className={inputCls}
+            value={form.law_category}
+            onChange={e => setForm(f => ({ ...f, law_category: e.target.value }))}
+          >
+            <option value="">— หมวดหมู่กฎหมาย (ระบุเพื่อให้ AI ใช้ URL นี้อัตโนมัติ) —</option>
+            {LAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <p className="text-[11px] text-slate-400">
+            💡 ถ้าเลือก category — Hermes จะ fetch URL นี้อัตโนมัติทุกครั้งที่สร้าง content ในหมวดนั้น แม้ทนายไม่ได้กรอก URL ใน requirement
+          </p>
           {addError && (
             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>
           )}
@@ -205,6 +223,11 @@ export default function RagPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-slate-800 truncate">{s.name}</span>
                     <span className={statusBadge(s.status)}>{s.status}</span>
+                    {s.law_category && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 border border-orange-200">
+                        ⚖️ {s.law_category}
+                      </span>
+                    )}
                     {s.chunk_count > 0 && (
                       <span className="text-xs text-slate-400">{s.chunk_count} chunks</span>
                     )}

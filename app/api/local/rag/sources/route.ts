@@ -20,7 +20,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const sb = getSupabase()
-    const body = await req.json() as { name: string; source_url: string; type?: string; notes?: string }
+    const body = await req.json() as { name: string; source_url: string; type?: string; notes?: string; law_category?: string | null }
     console.log('[rag/sources POST] body:', body)
     if (!body.name || !body.source_url) {
       return NextResponse.json({ error: 'name and source_url required' }, { status: 400 })
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     const type = body.type ?? (isGoogleDriveUrl(body.source_url) ? 'gdrive' : 'url')
     const { error } = await sb.from('knowledge_sources').insert({
       id, type, name: body.name, source_url: body.source_url,
+      law_category: body.law_category ?? null,
       status: 'pending', chunk_count: 0, notes: body.notes ?? null,
       created_at: now, updated_at: now,
     } as any)
