@@ -313,17 +313,18 @@ export async function processJob(job: Record<string, unknown>, requirement: Reco
       if (reqCategory) {
         try {
           const sb = getSupabase()
-          const { data: catSources } = await sb
+          const { data: catSources } = await (sb as any)
             .from('knowledge_sources')
             .select('source_url, name')
             .eq('law_category', reqCategory)
             .eq('status', 'indexed')
-            .limit(3)
+            .limit(3) as { data: Array<{ source_url: string | null; name: string }> | null }
 
           if (catSources && catSources.length > 0) {
             console.log(`[hermes] Category fallback URLs for "${reqCategory}": ${catSources.length} source(s)`)
             const fetched = await Promise.all(
-              catSources.map(async (s: { source_url: string; name: string }) => {
+              catSources.map(async (s) => {
+                if (!s.source_url) return ''
                 const content = await fetchUrlContent(s.source_url).catch(() => '')
                 return content ? `=== ${s.name} ===\n${content}` : ''
               })
