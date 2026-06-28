@@ -504,6 +504,7 @@ export default function NewRequirementPage() {
     preferred_post_time: '',
     priority: 'normal',
     notes: '',
+    source_url: '',
     references: '',
     blueprint: '',
   })
@@ -625,6 +626,7 @@ export default function NewRequirementPage() {
             preferred_post_time: form.preferred_post_time || null,
             priority: form.priority,
             notes: form.notes || null,
+            source_url: form.source_url || null,
           }),
         })
       })
@@ -1087,12 +1089,22 @@ export default function NewRequirementPage() {
           subtitle="Links, กฎหมาย, คดี — และโครงสร้าง content ที่ต้องการ"
           accent="#6366F1"
         >
-          <Field label="Source References" hint="URL หรืออ้างอิง เช่น มาตรากฎหมาย, คำพิพากษา, ลิงก์บทความ (1 บรรทัด/แหล่ง)">
+          <Field label="Source URL" hint="URL บทความ/กฎหมายที่ Hermes จะดึงเนื้อหามาใช้เป็น context (ถ้ามี)">
+            <input
+              className={inputCls}
+              type="url"
+              value={form.source_url}
+              onChange={(e) => set('source_url', e.target.value)}
+              placeholder="https://www.dbd.go.th/..."
+            />
+          </Field>
+
+          <Field label="Source References" hint="อ้างอิงเพิ่มเติม เช่น มาตรากฎหมาย, คำพิพากษา (1 บรรทัด/แหล่ง)">
             <textarea
               className={`${inputCls} min-h-[80px] resize-y font-mono text-xs`}
               value={form.references}
               onChange={(e) => set('references', e.target.value)}
-              placeholder={"มาตรา 1015 ป.พ.พ. — การจัดตั้งบริษัท\nhttps://www.dbd.go.th/...\nคำพิพากษาฎีกา 1234/2565"}
+              placeholder={"มาตรา 1015 ป.พ.พ. — การจัดตั้งบริษัท\nคำพิพากษาฎีกา 1234/2565"}
             />
           </Field>
 

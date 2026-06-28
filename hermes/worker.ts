@@ -200,17 +200,23 @@ async function generateImage(prompt: string, openaiKey: string, layout = 'square
   const imageUrl = res.data?.[0]?.url
   if (!imageUrl) return null
 
-  // Download image and save to public/generated/
+  // Download image then upload to Supabase Storage (Vercel has read-only FS)
   const imgRes = await fetch(imageUrl)
   const arrayBuf = await imgRes.arrayBuffer()
-  const b64 = Buffer.from(arrayBuf).toString('base64')
-
-  // Save to public/generated/ so Next.js can serve it
-  const outDir = path.join(process.cwd(), 'public', 'generated')
-  fs.mkdirSync(outDir, { recursive: true })
+  const buffer = Buffer.from(arrayBuf)
   const filename = `img_${Date.now()}.png`
-  fs.writeFileSync(path.join(outDir, filename), Buffer.from(b64, 'base64'))
-  return `/generated/${filename}`
+
+  const sb = getSupabase()
+  const { error: uploadError } = await sb.storage.from('uploads').upload(filename, buffer, {
+    contentType: 'image/png',
+    upsert: false,
+  })
+  if (uploadError) {
+    console.warn(`[hermes] Supabase upload failed: ${uploadError.message}`)
+    return null
+  }
+  const { data: { publicUrl } } = sb.storage.from('uploads').getPublicUrl(filename)
+  return publicUrl
 }
 
 // ─── Auto-schedule helper ──────────────────────────────────────────────────
@@ -261,7 +267,7 @@ async function fetchUrlContent(url: string): Promise<string> {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 2000)
+      .slice(0, 8000)
   } catch {
     return ''
   }
@@ -400,7 +406,14 @@ ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
 หน้าที่: เขียน Facebook post เกี่ยวกับกฎหมายไทย อ้างอิงจาก RAG Sources ที่ให้มา (ถ้าไม่มี RAG ให้ใช้ความรู้กฎหมายทั่วไป)
 ตอบกลับเป็น JSON ตามรูปแบบที่กำหนด ไม่อ้างกฎหมายแน่นอนเกินจริง`
     const contentRaw = await llmLong(contentSystemPrompt, buildContentPrompt(requirement, combinedContext, brand))
-    const content = JSON.parse(contentRaw)
+    let content: Record<string, unknown>
+    try {
+      content = JSON.parse(contentRaw)
+    } catch {
+      // LLM returned prose — wrap it as body
+      console.warn('[hermes] content JSON parse failed — wrapping as body')
+      content = { title: String(requirement.topic), hook: '', body: contentRaw, cta: '', hashtags: '', caption: '' }
+    }
 
     // ── Word count verification & expansion pass (max 2 rounds) ─────────
     const targetWc = parseInt(String(requirement.brief ?? '').match(/ความยาวเนื้อหา: (\d+) คำ/)?.[1] ?? '0')
@@ -466,7 +479,13 @@ ${content.body}
       ? imgUserContent
       : buildImagePromptPrompt(requirement, content, creativeProfile, brand)
     const imagePromptRaw = await llm(imageSystemPromptFull, imgUser)
-    const imagePrompt = JSON.parse(imagePromptRaw)
+    let imagePrompt: Record<string, unknown>
+    try {
+      imagePrompt = JSON.parse(imagePromptRaw)
+    } catch {
+      console.warn('[hermes] imagePrompt JSON parse failed — using raw as dalle_prompt')
+      imagePrompt = { dalle_prompt: imagePromptRaw.slice(0, 4000) }
+    }
 
     // Step 5: Video Brief (optional)
     let videoPrompt: Record<string, unknown> | undefined
@@ -476,7 +495,7 @@ ${content.body}
         ? `${brand.systemPrompt}\n\nคุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
         : `คุณสร้าง video brief สำหรับ Facebook reel/short video ของ${brand.firmName} ภาษาไทย ตอบกลับเป็น JSON`
       const videoRaw = await llm(videoSystemPrompt, buildVideoPromptPrompt(requirement, content))
-      videoPrompt = JSON.parse(videoRaw)
+      try { videoPrompt = JSON.parse(videoRaw) } catch { videoPrompt = { script: videoRaw } }
     }
 
     // Step 5.5: Generate actual image via DALL-E 3 (if not text-only layout)
