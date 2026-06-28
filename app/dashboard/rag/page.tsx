@@ -261,30 +261,59 @@ export default function RagPage() {
                 {LAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-orange-400 hover:bg-orange-50 transition-all">
+
+            {/* Drop zone */}
+            <label className={`relative flex flex-col items-center justify-center w-full rounded-xl cursor-pointer transition-all border-2 border-dashed
+              ${pdfForm.file
+                ? 'border-orange-400 bg-orange-50 py-4'
+                : 'border-slate-200 hover:border-orange-400 hover:bg-orange-50 py-8'
+              }`}>
               <input
                 type="file"
                 accept=".pdf,application/pdf"
                 className="hidden"
                 onChange={e => setPdfForm(f => ({ ...f, file: e.target.files?.[0] ?? null }))}
-                required
               />
               {pdfForm.file ? (
-                <div className="text-center">
-                  <p className="text-sm font-semibold text-orange-600">📄 {pdfForm.file.name}</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{(pdfForm.file.size / 1024).toFixed(0)} KB — คลิกเพื่อเปลี่ยน</p>
+                <div className="flex items-center gap-3 px-4">
+                  <span className="text-2xl">📄</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-orange-700 truncate">{pdfForm.file.name}</p>
+                    <p className="text-[11px] text-slate-400">{(pdfForm.file.size / 1024).toFixed(0)} KB — คลิกเพื่อเปลี่ยนไฟล์</p>
+                  </div>
+                  <span className="text-[10px] bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full shrink-0">พร้อม</span>
                 </div>
               ) : (
-                <div className="text-center">
-                  <p className="text-sm text-slate-400">คลิกหรือ drag PDF มาวางที่นี่</p>
-                  <p className="text-[11px] text-slate-300 mt-1">ขนาดสูงสุด 10MB</p>
+                <div className="text-center space-y-2">
+                  <div className="text-3xl">📂</div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600">คลิกเพื่อเลือกไฟล์ PDF</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">หรือ drag & drop มาที่นี่ — สูงสุด 10MB</p>
+                  </div>
                 </div>
               )}
             </label>
+
             {addError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>}
-            <button type="submit" disabled={adding || !pdfForm.file || !pdfForm.name} className="btn-primary text-sm disabled:opacity-50">
-              {adding ? 'กำลัง extract และ index PDF…' : '+ Upload และ Index PDF'}
+
+            <button
+              type="submit"
+              disabled={adding || !pdfForm.file || !pdfForm.name}
+              className="w-full py-3 rounded-xl font-semibold text-sm transition-all
+                disabled:opacity-40 disabled:cursor-not-allowed
+                enabled:bg-orange-500 enabled:text-white enabled:hover:bg-orange-600 enabled:shadow-sm enabled:hover:shadow-md"
+            >
+              {adding
+                ? <span className="flex items-center justify-center gap-2">⏳ กำลัง extract และ index PDF…</span>
+                : <span className="flex items-center justify-center gap-2">⬆️ Upload และ Index PDF</span>
+              }
             </button>
+
+            {!pdfForm.file && (
+              <p className="text-[11px] text-slate-400 text-center">
+                เลือกไฟล์ก่อน แล้วกดปุ่ม Upload ด้านบน
+              </p>
+            )}
           </form>
         )}
       </div>
