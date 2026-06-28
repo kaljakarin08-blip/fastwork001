@@ -736,6 +736,11 @@ function buildContentPrompt(req: Record<string, unknown>, ragContext: string, br
   const depthLevelText = brief.match(/ระดับความซับซ้อน: (.+)/)?.[1] ?? ''
   const timelinessText = brief.match(/ความทันสมัย: (.+)/)?.[1] ?? ''
 
+  // Gap 3: warn when timeliness = new law but no source URL
+  const timelinessWarning = timelinessText && timelinessText.includes('ใหม่') && !String(req.source_url ?? '').startsWith('http')
+    ? `\n⚠️ ทนายเลือก "${timelinessText}" แต่ไม่มี Source URL — ห้ามอ้างกฎหมายที่แก้ไขล่าสุดโดยไม่มีที่มา ให้ระบุว่า "กรุณาตรวจสอบฉบับปัจจุบัน" แทน`
+    : ''
+
   const intentBlock = [angleText, formatStyleText, sourceTypeText, depthLevelText, timelinessText].some(Boolean)
     ? `
 ═══ เจตนาของเนื้อหา (กรอกโดยทนาย) ═══
@@ -743,7 +748,7 @@ ${angleText ? `มุมมอง: ${angleText}` : ''}
 ${formatStyleText ? `รูปแบบ: ${formatStyleText} — ใช้ format นี้ในการเขียน body` : ''}
 ${sourceTypeText ? `ที่มา: ${sourceTypeText}` : ''}
 ${depthLevelText ? `ระดับผู้อ่าน: ${depthLevelText}` : ''}
-${timelinessText ? `ความทันสมัย: ${timelinessText}` : ''}`
+${timelinessText ? `ความทันสมัย: ${timelinessText}` : ''}${timelinessWarning}`
     : ''
 
   // Map selected categories → inject relevant Thai law references
@@ -818,6 +823,26 @@ Content Type: Carousel — สร้าง body เป็น slides (4-7 slides)
   } else if (isReel) {
     formatInstructions = `
 Content Type: Reel/Short Video — สร้าง body เป็น script สั้น เน้น hook แรก 3 วินาที`
+  } else if (formatStyleText) {
+    // Gap 1: map lawyer-selected format_style → explicit formatInstructions
+    const fsl = formatStyleText.toLowerCase()
+    if (fsl.includes('listicle') || fsl.includes('รายการ')) {
+      formatInstructions = `
+FORMAT: Listicle — เขียน body เป็นข้อ 5-7 ข้อ แต่ละข้อขึ้นต้นด้วย emoji + bold หัวข้อย่อย + อธิบาย 2-3 บรรทัด
+อ้างอิงกฎหมายอย่างน้อย 1 มาตราในแต่ละข้อที่เกี่ยวข้อง`
+    } else if (fsl.includes('step') || fsl.includes('ขั้นตอน')) {
+      formatInstructions = `
+FORMAT: Step-by-Step — เขียน body เป็น numbered steps (ขั้นตอนที่ 1, 2, 3...) แต่ละขั้นตอนอธิบายชัดเจน action ที่ต้องทำ
+ระบุกฎหมาย/มาตราที่ cover แต่ละขั้นตอนด้วย`
+    } else if (fsl.includes('q&a') || fsl.includes('ถาม') || fsl.includes('faq')) {
+      formatInstructions = `
+FORMAT: Q&A — เขียน body เป็นคู่ ❓คำถาม / ✅ คำตอบ อย่างน้อย 3-5 คู่
+คำถามต้องเป็นสิ่งที่คนทั่วไปสงสัยจริง คำตอบต้องอ้างอิงกฎหมายที่ถูกต้อง`
+    } else if (fsl.includes('story') || fsl.includes('เล่าเรื่อง')) {
+      formatInstructions = `
+FORMAT: Storytelling — เขียน body เป็นเรื่องเล่าที่มีตัวละคร สถานการณ์ ปัญหา และการแก้ไข
+ใส่กฎหมายอ้างอิงในจังหวะที่เกี่ยวข้องกับเรื่อง ไม่ยัดเยียด`
+    }
   }
 
   const brandBlock = brand ? `
@@ -846,6 +871,11 @@ Brand Colors: Primary ${brand.primaryColor} / Secondary ${brand.secondaryColor}
 5. สรุป (${Math.round(wc*0.05)} คำ)`
 
   // JSON schema — case study เพิ่ม disclaimer field
+  // Gap 2: source_type สมมติ → เพิ่ม disclaimer แม้ไม่ใช่ case study
+  const isHypothetical = sourceTypeText.includes('สมมติ') || sourceTypeText.includes('hypothetical')
+  const hypotheticalDisclaimer = isHypothetical
+    ? `\n  "disclaimer": "เนื้อหานี้เป็นความรู้ทั่วไปเพื่อการศึกษา ข้อมูลอาจเป็นสถานการณ์สมมติ ควรปรึกษาทนายความก่อนดำเนินการใดๆ",`
+    : ''
   const jsonSchema = isCaseStudy ? `{
   "title": "ชื่อ post ที่คนจำได้",
   "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน",
@@ -861,7 +891,7 @@ Brand Colors: Primary ${brand.primaryColor} / Secondary ${brand.secondaryColor}
   "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน (ห้ามเริ่มด้วย 'สวัสดี' หรือชื่อบริษัท)",
   "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
   "body": "เนื้อหาหลัก — ครบตามความยาวที่กำหนด พร้อมอ้างอิงกฎหมาย/มาตรา",
-  "legal_references": ["ป.พ.พ. มาตรา XXX — ชื่อมาตรา", "พ.ร.บ. XXX พ.ศ. XXXX มาตรา YYY"],
+  "legal_references": ["ป.พ.พ. มาตรา XXX — ชื่อมาตรา", "พ.ร.บ. XXX พ.ศ. XXXX มาตรา YYY"],${hypotheticalDisclaimer}
   "cta": "call to action ชัดเจน 1 ประโยค",
   "hashtags": "#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5",
   "compliance_note": "ข้อควรระวัง legal risk หรือข้อจำกัดของเนื้อหานี้ (ห้ามเว้นว่าง)"
