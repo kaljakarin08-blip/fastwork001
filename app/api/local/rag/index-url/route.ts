@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase/admin'
 import { nowIso } from '@/lib/utils'
+import { extractPdfText } from '@/lib/pdf-extract'
 
 const CHUNK_SIZE = 800
 
@@ -86,23 +87,27 @@ export async function POST(req: NextRequest) {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
 
     const contentType = res.headers.get('content-type') ?? ''
-
-    // PDF ไม่สามารถ extract text ได้โดยตรง — แจ้ง error ชัดเจน
     const isPdf = contentType.includes('application/pdf') || fetchUrl.toLowerCase().endsWith('.pdf')
-    if (isPdf) {
-      throw new Error('ไม่รองรับไฟล์ PDF โดยตรง — กรุณาใช้ URL ของหน้าเว็บ HTML แทน หรือ copy เนื้อหาไปวางใน Google Doc แล้วใส่ link นั้น')
-    }
-
-    const raw = await res.text()
 
     let text: string
     let title: string
-    if (isPlainText || contentType.includes('text/plain') || contentType.includes('text/csv')) {
-      text = raw.trim()
+
+    if (isPdf) {
+      // Extract text จาก PDF binary
+      const arrayBuffer = await res.arrayBuffer()
+      const extracted = await extractPdfText(Buffer.from(arrayBuffer))
+      if (!extracted || extracted.length < 50) throw new Error('ไม่พบข้อความใน PDF — อาจเป็น scanned image หรือ PDF ที่ป้องกันการคัดลอก')
+      text = extracted
       title = source.name
     } else {
-      text = htmlToText(raw)
-      title = extractTitle(raw, source.name)
+      const raw = await res.text()
+      if (isPlainText || contentType.includes('text/plain') || contentType.includes('text/csv')) {
+        text = raw.trim()
+        title = source.name
+      } else {
+        text = htmlToText(raw)
+        title = extractTitle(raw, source.name)
+      }
     }
 
     if (!text || text.length < 50) throw new Error('Fetched content too short or empty — page may require login')

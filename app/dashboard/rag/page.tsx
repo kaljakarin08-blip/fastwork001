@@ -42,7 +42,9 @@ function statusBadge(status: string) {
 export default function RagPage() {
   const [sources, setSources] = useState<KnowledgeSource[]>([])
   const [loading, setLoading] = useState(true)
+  const [addMode, setAddMode] = useState<'url' | 'pdf'>('url')
   const [form, setForm] = useState({ name: '', source_url: '', law_category: '' })
+  const [pdfForm, setPdfForm] = useState({ name: '', law_category: '', file: null as File | null })
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState('')
   const [indexingId, setIndexingId] = useState<string | null>(null)
@@ -74,6 +76,27 @@ export default function RagPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setForm({ name: '', source_url: '', law_category: '' })
+      await loadSources()
+    } catch (err) {
+      setAddError(String(err))
+    }
+    setAdding(false)
+  }
+
+  async function addPdf(e: React.FormEvent) {
+    e.preventDefault()
+    if (!pdfForm.name.trim() || !pdfForm.file) return
+    setAdding(true)
+    setAddError('')
+    try {
+      const fd = new FormData()
+      fd.append('file', pdfForm.file)
+      fd.append('name', pdfForm.name)
+      if (pdfForm.law_category) fd.append('law_category', pdfForm.law_category)
+      const res = await fetch('/api/local/rag/upload-pdf', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setPdfForm({ name: '', law_category: '', file: null })
       await loadSources()
     } catch (err) {
       setAddError(String(err))
@@ -159,47 +182,111 @@ export default function RagPage() {
         ))}
       </div>
 
-      {/* Add URL */}
+      {/* Add Source — URL or PDF */}
       <div className="card p-6 space-y-4">
-        <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-          <span className="text-lg">🔗</span> เพิ่ม URL Source
-        </h2>
-        <form onSubmit={addSource} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              className={inputCls}
-              placeholder="ชื่อ เช่น ค่าจ้างขั้นต่ำ 2567"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              required
-            />
-            <input
-              className={inputCls}
-              placeholder="https://..."
-              value={form.source_url}
-              onChange={e => setForm(f => ({ ...f, source_url: e.target.value }))}
-              type="url"
-              required
-            />
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+            <span className="text-lg">{addMode === 'url' ? '🔗' : '📄'}</span>
+            เพิ่ม Knowledge Source
+          </h2>
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => { setAddMode('url'); setAddError('') }}
+              className={`px-3 py-1.5 transition-colors ${addMode === 'url' ? 'bg-orange-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+            >
+              🔗 URL
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAddMode('pdf'); setAddError('') }}
+              className={`px-3 py-1.5 transition-colors ${addMode === 'pdf' ? 'bg-orange-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+            >
+              📄 PDF
+            </button>
           </div>
-          <select
-            className={inputCls}
-            value={form.law_category}
-            onChange={e => setForm(f => ({ ...f, law_category: e.target.value }))}
-          >
-            <option value="">— หมวดหมู่กฎหมาย (ระบุเพื่อให้ AI ใช้ URL นี้อัตโนมัติ) —</option>
-            {LAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <p className="text-[11px] text-slate-400">
-            💡 ถ้าเลือก category — Hermes จะ fetch URL นี้อัตโนมัติทุกครั้งที่สร้าง content ในหมวดนั้น แม้ทนายไม่ได้กรอก URL ใน requirement
-          </p>
-          {addError && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>
-          )}
-          <button type="submit" disabled={adding} className="btn-primary text-sm disabled:opacity-50">
-            {adding ? 'กำลังเพิ่ม…' : '+ เพิ่ม URL'}
-          </button>
-        </form>
+        </div>
+
+        {addMode === 'url' ? (
+          <form onSubmit={addSource} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className={inputCls}
+                placeholder="ชื่อ เช่น ค่าจ้างขั้นต่ำ 2567"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                required
+              />
+              <input
+                className={inputCls}
+                placeholder="https://... (HTML หรือ PDF URL)"
+                value={form.source_url}
+                onChange={e => setForm(f => ({ ...f, source_url: e.target.value }))}
+                type="url"
+                required
+              />
+            </div>
+            <select
+              className={inputCls}
+              value={form.law_category}
+              onChange={e => setForm(f => ({ ...f, law_category: e.target.value }))}
+            >
+              <option value="">— หมวดหมู่กฎหมาย (ระบุเพื่อให้ AI ใช้อัตโนมัติ) —</option>
+              {LAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <p className="text-[11px] text-slate-400">
+              💡 รองรับทั้ง HTML และ PDF URL — ถ้าเลือก category Hermes จะ fetch อัตโนมัติเมื่อสร้าง content ในหมวดนั้น
+            </p>
+            {addError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>}
+            <button type="submit" disabled={adding} className="btn-primary text-sm disabled:opacity-50">
+              {adding ? 'กำลังเพิ่ม…' : '+ เพิ่ม URL'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={addPdf} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className={inputCls}
+                placeholder="ชื่อ เช่น คู่มือ BOI 2567"
+                value={pdfForm.name}
+                onChange={e => setPdfForm(f => ({ ...f, name: e.target.value }))}
+                required
+              />
+              <select
+                className={inputCls}
+                value={pdfForm.law_category}
+                onChange={e => setPdfForm(f => ({ ...f, law_category: e.target.value }))}
+              >
+                <option value="">— หมวดหมู่กฎหมาย —</option>
+                {LAW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-orange-400 hover:bg-orange-50 transition-all">
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                className="hidden"
+                onChange={e => setPdfForm(f => ({ ...f, file: e.target.files?.[0] ?? null }))}
+                required
+              />
+              {pdfForm.file ? (
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-orange-600">📄 {pdfForm.file.name}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{(pdfForm.file.size / 1024).toFixed(0)} KB — คลิกเพื่อเปลี่ยน</p>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-sm text-slate-400">คลิกหรือ drag PDF มาวางที่นี่</p>
+                  <p className="text-[11px] text-slate-300 mt-1">ขนาดสูงสุด 10MB</p>
+                </div>
+              )}
+            </label>
+            {addError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{addError}</p>}
+            <button type="submit" disabled={adding || !pdfForm.file || !pdfForm.name} className="btn-primary text-sm disabled:opacity-50">
+              {adding ? 'กำลัง extract และ index PDF…' : '+ Upload และ Index PDF'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Source List */}
