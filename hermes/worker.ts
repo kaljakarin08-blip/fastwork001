@@ -742,26 +742,65 @@ function buildContentPrompt(req: Record<string, unknown>, ragContext: string, br
     const key = categoryMap[cat]
     if (key && LAW_REFERENCES[key]) relevantLaws.push(...LAW_REFERENCES[key])
   }
-  // Also include topic-based law detection (for finance/criminal topics without explicit category)
-  const topic = String(req.topic ?? '').toLowerCase()
-  if ((topic.includes('หลอกลวง') || topic.includes('ฉ้อโกง') || topic.includes('ฟอก')) && !relevantLaws.length) {
-    relevantLaws.push(...LAW_REFERENCES.criminal, ...LAW_REFERENCES.finance)
+  // Topic-based law detection (ไม่เลือก category แต่ topic ชัดเจน)
+  const topic = String(req.topic ?? '')
+  const topicLower = topic.toLowerCase()
+  if (!relevantLaws.length) {
+    if (topicLower.includes('หลอกลวง') || topicLower.includes('ฉ้อโกง') || topicLower.includes('ฟอก') || topicLower.includes('บัญชีม้า')) {
+      relevantLaws.push(...LAW_REFERENCES.criminal, ...LAW_REFERENCES.finance)
+    } else if (topicLower.includes('คดีแพ่ง') || topicLower.includes('ฟ้องร้อง') || topicLower.includes('กรณีศึกษา')) {
+      relevantLaws.push(...LAW_REFERENCES.litigation, ...LAW_REFERENCES.contract)
+    } else if (topicLower.includes('แรงงาน') || topicLower.includes('ลูกจ้าง') || topicLower.includes('นายจ้าง')) {
+      relevantLaws.push(...LAW_REFERENCES.labor)
+    } else if (topicLower.includes('ภาษี') || topicLower.includes('สรรพากร')) {
+      relevantLaws.push(...LAW_REFERENCES.tax)
+    }
   }
   const lawBlock = relevantLaws.length > 0
     ? `\n═══ กฎหมายที่เกี่ยวข้อง (ต้องอ้างอิงในเนื้อหา) ═══\n${relevantLaws.map(l => `• ${l}`).join('\n')}`
     : ''
 
+  // ─── Case Study detection ──────────────────────────────────────────────
+  const isCaseStudy = topicLower.includes('กรณีศึกษา') || goalsLine.includes('case_study') || goalsLine.includes('Case Study')
+  const hasSourceUrl = String(req.source_url ?? '').startsWith('http')
+
   const isCarousel = req.content_type === 'carousel'
   const isReel = req.content_type === 'reel_script' || req.content_type === 'short_video'
 
   let formatInstructions = ''
-  if (isCarousel) {
+  if (isCaseStudy) {
+    // Case Study format — structured 5-part นาทีการเปิดเผยข้อมูลลูกค้า
+    formatInstructions = hasSourceUrl
+      ? `
+═══ FORMAT: CASE STUDY (อ้างอิงจาก Source URL ที่ให้) ═══
+เขียน body ตาม 5-part structure นี้ (ใส่หัวข้อแต่ละส่วนด้วย emoji):
+
+⚖️ เหตุการณ์ (Facts): ข้อเท็จจริงของคดี — ใคร ทำอะไร เมื่อไหร่ ความเสียหายเท่าไหร่
+📋 ประเด็นกฎหมาย (Legal Issue): กฎหมาย/มาตราที่เกี่ยวข้อง — อ้างอิงจาก LAW_REFERENCES ด้านบน
+🎯 กลยุทธ์ (Strategy): ทีมกฎหมายวางแผนอะไร ทำขั้นตอนไหนบ้าง
+✅ ผลลัพธ์ (Outcome): ผลคดีคืออะไร ได้รับเท่าไหร่ ใช้เวลากี่เดือน
+💡 บทเรียน (Lesson): สิ่งที่ผู้อ่านควรทำหากเจอสถานการณ์คล้ายกัน
+
+body ต้องมีรายละเอียดครบ 5 ส่วน ไม่ย่อ`
+      : `
+═══ FORMAT: สมมติกรณีศึกษา (Hypothetical Case Study) ═══
+⚠️ ไม่มี Source URL — ให้สร้างเป็นสถานการณ์สมมติที่สมจริงและให้ความรู้ที่ถูกต้อง
+body ต้องเริ่มด้วย "📌 สถานการณ์สมมติ (เพื่อการศึกษา)" และมีโครงสร้างดังนี้:
+
+📌 สถานการณ์สมมติ: ตัวละครสมมติ สถานการณ์ที่เกิดขึ้น ความเสียหาย
+⚖️ กฎหมายที่เกี่ยวข้อง: มาตรา/พ.ร.บ. ที่ apply กับสถานการณ์นี้ (อ้างจาก LAW_REFERENCES)
+🎯 แนวทางที่ถูกต้อง: ควรทำอะไร ลำดับขั้นตอน
+✅ ผลที่ควรได้รับ: สิทธิ์ที่มีตามกฎหมาย
+💡 สรุปบทเรียน: takeaway สำหรับผู้อ่าน
+
+disclaimer ใน JSON ต้องระบุชัดว่า "เป็นกรณีศึกษาสมมติเพื่อการศึกษา ไม่ใช่คดีจริง"`
+  } else if (isCarousel) {
     formatInstructions = `
-Content Type: Carousel — สร้าง body เป็น array ของ slides (4-7 slides) แต่ละ slide มี headline + 1-2 บรรทัด
-"body": "Slide 1: [headline] — [text]\nSlide 2: [headline] — [text]\n..."`
+Content Type: Carousel — สร้าง body เป็น slides (4-7 slides) แต่ละ slide มี headline + 1-2 บรรทัด
+"body": "Slide 1: [headline] — [text]\nSlide 2: ..."`
   } else if (isReel) {
     formatInstructions = `
-Content Type: Reel/Short Video — สร้าง body เป็น script โครงสร้างสั้น เน้น hook แรก 3 วินาที`
+Content Type: Reel/Short Video — สร้าง body เป็น script สั้น เน้น hook แรก 3 วินาที`
   }
 
   const brandBlock = brand ? `
@@ -776,11 +815,46 @@ ${brand.lineId ? `LINE: ${brand.lineId}` : ''}
 Brand Colors: Primary ${brand.primaryColor} / Secondary ${brand.secondaryColor}
 ` : ''
 
+  const wc = targetWordCount ?? 800
+  const minChars = wc * 4
+  const bodyStructure = isCaseStudy
+    ? `body ต้องครบ 5 ส่วนตาม FORMAT ด้านล่าง (ความยาวรวมอย่างน้อย ${minChars} ตัวอักษร)`
+    : `ความยาวเนื้อหา body: อย่างน้อย ${wc} คำ (≈ ${minChars} ตัวอักษร)
+⚠️ กฎเหล็ก: body ต้องไม่ต่ำกว่า ${minChars} ตัวอักษร
+โครงสร้าง body:
+1. บทนำ (${Math.round(wc*0.15)} คำ)
+2. เนื้อหาหลัก 3-5 หัวข้อย่อย พร้อมอ้างอิงกฎหมาย (${Math.round(wc*0.55)} คำ)
+3. ตัวอย่าง/กรณีศึกษา (${Math.round(wc*0.15)} คำ)
+4. ข้อควรระวัง (${Math.round(wc*0.1)} คำ)
+5. สรุป (${Math.round(wc*0.05)} คำ)`
+
+  // JSON schema — case study เพิ่ม disclaimer field
+  const jsonSchema = isCaseStudy ? `{
+  "title": "ชื่อ post ที่คนจำได้",
+  "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน",
+  "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
+  "body": "เนื้อหาครบ 5 ส่วนตาม FORMAT — Facts / Legal Issue / Strategy / Outcome / Lesson พร้อมอ้างอิงกฎหมาย",
+  "legal_references": ["ป.วิ.แพ่ง มาตรา XXX", "ป.พ.พ. มาตรา XXX — ชื่อ"],
+  "disclaimer": "${hasSourceUrl ? 'ข้อมูลอ้างอิงจาก [source] — เพื่อการศึกษา ไม่ใช่คำแนะนำทางกฎหมาย' : 'กรณีศึกษาสมมติเพื่อการศึกษาเท่านั้น ไม่ใช่คดีจริง — หากมีข้อสงสัยควรปรึกษาทนายความ'}",
+  "cta": "call to action ชัดเจน 1 ประโยค",
+  "hashtags": "#กรณีศึกษากฎหมาย #คดีแพ่ง #กฎหมายไทย #ทนายความ #legalcase",
+  "compliance_note": "ข้อจำกัดหรือ legal risk ของเนื้อหานี้"
+}` : `{
+  "title": "ชื่อ post ที่คนจำได้",
+  "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน (ห้ามเริ่มด้วย 'สวัสดี' หรือชื่อบริษัท)",
+  "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
+  "body": "เนื้อหาหลัก — ครบตามความยาวที่กำหนด พร้อมอ้างอิงกฎหมาย/มาตรา",
+  "legal_references": ["ป.พ.พ. มาตรา XXX — ชื่อมาตรา", "พ.ร.บ. XXX พ.ศ. XXXX มาตรา YYY"],
+  "cta": "call to action ชัดเจน 1 ประโยค",
+  "hashtags": "#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5",
+  "compliance_note": "ข้อควรระวัง legal risk หรือข้อจำกัดของเนื้อหานี้ (ห้ามเว้นว่าง)"
+}`
+
   return `คุณเป็น content writer ผู้เชี่ยวชาญกฎหมายไทย เขียน Facebook post ที่ถูกต้องทางกฎหมาย เข้าใจง่าย และ engage ผู้อ่าน
 กฎสำคัญ: ทุก claim ทางกฎหมายต้องอ้างอิงมาตราหรือ พ.ร.บ. ที่ถูกต้องเสมอ — ห้ามระบุโทษหรือสิทธิโดยไม่มีที่มา
 ${brandBlock}
 ═══ BRIEF ═══
-Topic: ${req.topic}
+Topic: ${topic}
 ${lawCategoryLine ? `หมวดหมู่กฎหมาย: ${lawCategoryLine}` : ''}
 ${goalsLine ? `เป้าหมาย: ${goalsLine}` : ''}
 ${keyMessageLine ? `Key Message: ${keyMessageLine}` : ''}
@@ -788,18 +862,7 @@ ${ctaLine ? `CTA ที่ต้องการ: ${ctaLine}` : ''}
 Target Audience: ${req.target_audience ?? 'เจ้าของธุรกิจและประชาชนทั่วไป'}
 Tone: ${req.tone ?? 'professional'}
 Objective: ${req.objective ?? 'ให้ความรู้'}
-${(() => {
-    const wc = targetWordCount ?? 800
-    const minChars = wc * 4
-    return `ความยาวเนื้อหา body: อย่างน้อย ${wc} คำ (≈ ${minChars} ตัวอักษรภาษาไทย)
-⚠️ กฎเหล็ก: body ต้องมีความยาวไม่ต่ำกว่า ${minChars} ตัวอักษร — ห้ามส่งสั้นกว่านี้
-โครงสร้าง body ที่แนะนำ:
-1. บทนำ — อธิบาย topic ทำไมถึงสำคัญ (${Math.round(wc*0.15)} คำ)
-2. เนื้อหาหลัก 3-5 หัวข้อย่อย พร้อม อ้างอิงกฎหมาย/มาตรา (${Math.round(wc*0.55)} คำ)
-3. ตัวอย่างจริง / กรณีศึกษา (${Math.round(wc*0.15)} คำ)
-4. ข้อควรระวัง / สิ่งที่ต้องทำ (${Math.round(wc*0.1)} คำ)
-5. สรุป (${Math.round(wc*0.05)} คำ)`
-  })()}
+${bodyStructure}
 ${doNotLine ? `ห้ามพูดถึง: ${doNotLine}` : ''}
 ${lawBlock}
 
@@ -811,16 +874,7 @@ ${ragContext}
 ${formatInstructions}
 
 ตอบกลับเป็น JSON เท่านั้น:
-{
-  "title": "ชื่อ post ที่คนจำได้",
-  "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน (ห้ามเริ่มด้วย 'สวัสดี' หรือชื่อบริษัท)",
-  "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
-  "body": "เนื้อหาหลัก — ต้องมีความยาวตามที่กำหนด เขียนเป็น bullet points หรือ structured text ที่ละเอียด ครบถ้วน ตาม content type พร้อมอ้างอิงกฎหมาย/มาตราที่ระบุ",
-  "legal_references": ["ป.พ.พ. มาตรา XXX — ชื่อมาตรา", "พ.ร.บ. XXX พ.ศ. XXXX มาตรา YYY"],
-  "cta": "call to action ชัดเจน 1 ประโยค",
-  "hashtags": "#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5",
-  "compliance_note": "ข้อควรระวัง legal risk หรือข้อจำกัดของเนื้อหานี้ (ห้ามเว้นว่าง)"
-}`
+${jsonSchema}`
 }
 
 function buildImagePromptPrompt(req: Record<string, unknown>, content: Record<string, unknown>, profile: Record<string, unknown> | null = null, brand?: BrandContext) {
