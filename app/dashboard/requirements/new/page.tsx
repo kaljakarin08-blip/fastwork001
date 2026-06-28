@@ -507,6 +507,11 @@ export default function NewRequirementPage() {
     source_url: '',
     references: '',
     blueprint: '',
+    angle: '',
+    format_style: '',
+    source_type: '',
+    depth_level: '',
+    timeliness: '',
   })
 
   useEffect(() => {
@@ -595,6 +600,11 @@ export default function NewRequirementPage() {
     if (form.do_not_mention) enrichedParts.push(`Do NOT mention: ${form.do_not_mention}`)
     if (form.references) enrichedParts.push(`References:\n${form.references}`)
     if (form.blueprint) enrichedParts.push(`Content Blueprint:\n${form.blueprint}`)
+    if (form.angle) enrichedParts.push(`มุมมองการเล่าเรื่อง: ${form.angle}`)
+    if (form.format_style) enrichedParts.push(`รูปแบบเนื้อหา: ${form.format_style}`)
+    if (form.source_type) enrichedParts.push(`ที่มาของเนื้อหา: ${form.source_type}`)
+    if (form.depth_level) enrichedParts.push(`ระดับความซับซ้อน: ${form.depth_level}`)
+    if (form.timeliness) enrichedParts.push(`ความทันสมัย: ${form.timeliness}`)
     enrichedParts.push(`ความยาวเนื้อหา: ${wordCount} คำ`)
 
     const enrichedBrief = enrichedParts.join('\n\n') || null
@@ -950,6 +960,134 @@ export default function NewRequirementPage() {
               </div>
             </div>
           </Field>
+        </Section>
+
+        {/* ── B2. Content Intent ── */}
+        <Section
+          step="B2"
+          title="ทนายกรอกเอง — เจตนาของเนื้อหา"
+          subtitle="AI จะใช้ข้อมูลนี้กำหนดโครงสร้างและสไตล์การเขียน"
+          accent="#0EA5E9"
+        >
+          {/* Angle */}
+          <Field label="มุมมองการเล่าเรื่อง" hint="เล่าจากมุมใคร — เปลี่ยน perspective ของ content ทั้งหมด">
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'ทนายให้ความรู้', icon: '⚖️', desc: 'Expert Advice' },
+                { id: 'ผู้เสียหายแก้ปัญหาได้', icon: '💪', desc: 'Victim → Win' },
+                { id: 'เจ้าของธุรกิจ SME', icon: '🏢', desc: 'Business Owner' },
+                { id: 'ลูกจ้าง / นายจ้าง', icon: '👥', desc: 'Labor Perspective' },
+                { id: 'เตือนภัยก่อนเกิดปัญหา', icon: '🚨', desc: 'Prevention' },
+                { id: 'เปรียบเทียบข้อดี-ข้อเสีย', icon: '⚡', desc: 'Comparison' },
+              ].map((a) => (
+                <button key={a.id} type="button"
+                  onClick={() => set('angle', form.angle === a.id ? '' : a.id)}
+                  className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border-2 text-left transition-all ${
+                    form.angle === a.id
+                      ? 'border-sky-500 bg-sky-50 text-sky-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-sky-300'
+                  }`}
+                >
+                  <span className="text-base shrink-0">{a.icon}</span>
+                  <div>
+                    <div className="text-xs font-semibold leading-tight">{a.id}</div>
+                    <div className="text-[10px] text-slate-400 leading-tight">{a.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {/* Format Style */}
+          <Field label="รูปแบบเนื้อหา" hint="โครงสร้างการเขียน — AI จะ format body ตามที่เลือก">
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'Listicle — รายการ 5-7 ข้อ', icon: '📋', desc: '"5 สิ่งที่ต้องรู้..."' },
+                { id: 'Step-by-step — ขั้นตอน', icon: '🪜', desc: 'ทำตามทีละขั้น' },
+                { id: 'Q&A — ถาม-ตอบ', icon: '💬', desc: 'FAQ format' },
+                { id: 'Storytelling — เล่าเรื่อง', icon: '📖', desc: 'Narrative' },
+                { id: 'Warning/Alert — เตือนภัย', icon: '⚠️', desc: 'เน้นความเสี่ยง' },
+                { id: 'Deep Dive — วิเคราะห์เชิงลึก', icon: '🔬', desc: 'Expert Analysis' },
+              ].map((f) => (
+                <button key={f.id} type="button"
+                  onClick={() => set('format_style', form.format_style === f.id ? '' : f.id)}
+                  className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border-2 text-left transition-all ${
+                    form.format_style === f.id
+                      ? 'border-sky-500 bg-sky-50 text-sky-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-sky-300'
+                  }`}
+                >
+                  <span className="text-base shrink-0">{f.icon}</span>
+                  <div>
+                    <div className="text-xs font-semibold leading-tight">{f.id.split(' — ')[0]}</div>
+                    <div className="text-[10px] text-slate-400 leading-tight">{f.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {/* Source Type + Depth + Timeliness */}
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="ที่มาของเนื้อหา" hint="บอก AI ว่าอ้างอิงจากอะไร">
+              <div className="space-y-1.5">
+                {[
+                  { id: 'ประสบการณ์คดีจริง (anonymize)', icon: '⚖️' },
+                  { id: 'FAQ ที่ลูกค้าถามบ่อย', icon: '❓' },
+                  { id: 'กฎหมายใหม่ / ประกาศล่าสุด', icon: '📰' },
+                  { id: 'ความรู้ทั่วไป (สมมติ)', icon: '💡' },
+                ].map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="source_type" value={s.id}
+                      checked={form.source_type === s.id}
+                      onChange={() => set('source_type', s.id)}
+                      className="accent-sky-600" />
+                    <span className="text-xs text-slate-700">{s.icon} {s.id}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="ระดับความซับซ้อน" hint="ผู้อ่านรู้กฎหมายระดับไหน">
+              <div className="space-y-1.5">
+                {[
+                  { id: 'มือใหม่ — อธิบายทุกศัพท์', desc: 'Beginner' },
+                  { id: 'ทั่วไป — รู้พื้นฐานแล้ว', desc: 'General' },
+                  { id: 'มืออาชีพ — เน้น nuance', desc: 'Expert' },
+                ].map((d) => (
+                  <label key={d.id} className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="depth_level" value={d.id}
+                      checked={form.depth_level === d.id}
+                      onChange={() => set('depth_level', d.id)}
+                      className="accent-sky-600" />
+                    <div>
+                      <span className="text-xs font-semibold text-slate-700">{d.id.split(' — ')[0]}</span>
+                      <span className="text-[10px] text-slate-400 ml-1">{d.desc}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="ความทันสมัย" hint="เนื้อหานี้เกี่ยวข้องกับเวลาไหม">
+              <div className="space-y-1.5">
+                {[
+                  { id: 'Evergreen — ใช้ได้ตลอด', icon: '🌿' },
+                  { id: 'กฎหมายใหม่ที่เพิ่งแก้ไข', icon: '🆕' },
+                  { id: 'คดีข่าวดัง / กระแสสังคม', icon: '📢' },
+                  { id: 'ฤดูกาล เช่น ปิดงบ / เสียภาษี', icon: '📅' },
+                ].map((t) => (
+                  <label key={t.id} className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="timeliness" value={t.id}
+                      checked={form.timeliness === t.id}
+                      onChange={() => set('timeliness', t.id)}
+                      className="accent-sky-600" />
+                    <span className="text-xs text-slate-700">{t.icon} {t.id.split(' — ')[0]}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+          </div>
         </Section>
 
         {/* ── C. Tone & Goals ── */}

@@ -729,6 +729,23 @@ function buildContentPrompt(req: Record<string, unknown>, ragContext: string, br
   const referencesMatch = brief.match(/References:\n([\s\S]+?)(?:\n\n|$)/)
   const referencesText = referencesMatch?.[1] ?? ''
 
+  // Content Intent fields (กรอกโดยทนาย)
+  const angleText = brief.match(/มุมมองการเล่าเรื่อง: (.+)/)?.[1] ?? ''
+  const formatStyleText = brief.match(/รูปแบบเนื้อหา: (.+)/)?.[1] ?? ''
+  const sourceTypeText = brief.match(/ที่มาของเนื้อหา: (.+)/)?.[1] ?? ''
+  const depthLevelText = brief.match(/ระดับความซับซ้อน: (.+)/)?.[1] ?? ''
+  const timelinessText = brief.match(/ความทันสมัย: (.+)/)?.[1] ?? ''
+
+  const intentBlock = [angleText, formatStyleText, sourceTypeText, depthLevelText, timelinessText].some(Boolean)
+    ? `
+═══ เจตนาของเนื้อหา (กรอกโดยทนาย) ═══
+${angleText ? `มุมมอง: ${angleText}` : ''}
+${formatStyleText ? `รูปแบบ: ${formatStyleText} — ใช้ format นี้ในการเขียน body` : ''}
+${sourceTypeText ? `ที่มา: ${sourceTypeText}` : ''}
+${depthLevelText ? `ระดับผู้อ่าน: ${depthLevelText}` : ''}
+${timelinessText ? `ความทันสมัย: ${timelinessText}` : ''}`
+    : ''
+
   // Map selected categories → inject relevant Thai law references
   const categoryMap: Record<string, string> = {
     'กฎหมายบริษัท': 'corporate', 'ภาษีและบัญชี': 'tax', 'อสังหาริมทรัพย์': 'property',
@@ -864,6 +881,7 @@ Tone: ${req.tone ?? 'professional'}
 Objective: ${req.objective ?? 'ให้ความรู้'}
 ${bodyStructure}
 ${doNotLine ? `ห้ามพูดถึง: ${doNotLine}` : ''}
+${intentBlock}
 ${lawBlock}
 
 ${blueprintText ? `═══ BLUEPRINT ═══\n${blueprintText}` : ''}
