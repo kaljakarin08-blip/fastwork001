@@ -618,6 +618,85 @@ const LAW_VISUAL_CONTEXT: Record<string, string> = {
   environment: 'environmental permit documents, green space, urban planning map, construction site',
 }
 
+/* ─── Category → relevant Thai laws ────────────────────── */
+
+const LAW_REFERENCES: Record<string, string[]> = {
+  corporate: [
+    'ประมวลกฎหมายแพ่งและพาณิชย์ (ป.พ.พ.) บรรพ 3 ลักษณะ 22 — บริษัทจำกัด มาตรา 1096–1336',
+    'พ.ร.บ. บริษัทมหาชนจำกัด พ.ศ. 2535',
+    'พ.ร.บ. ทะเบียนพาณิชย์ พ.ศ. 2499',
+    'ประมวลรัษฎากร — ภาษีนิติบุคคล',
+  ],
+  tax: [
+    'ประมวลรัษฎากร — ภาษีเงินได้บุคคลธรรมดา / นิติบุคคล / VAT / ภาษีหัก ณ ที่จ่าย',
+    'พ.ร.บ. การบัญชี พ.ศ. 2543',
+    'พ.ร.บ. วิชาชีพบัญชี พ.ศ. 2547',
+    'ข้อกำหนด กรมสรรพากร (Revenue Department Regulations)',
+  ],
+  property: [
+    'ประมวลกฎหมายที่ดิน พ.ศ. 2497',
+    'ป.พ.พ. บรรพ 4 — ทรัพย์สิน มาตรา 1298–1434',
+    'ป.พ.พ. ลักษณะซื้อขาย มาตรา 453–517, ลักษณะเช่าทรัพย์ มาตรา 537–603',
+    'พ.ร.บ. อาคารชุด พ.ศ. 2522',
+    'พ.ร.บ. การจัดสรรที่ดิน พ.ศ. 2543',
+  ],
+  labor: [
+    'พ.ร.บ. คุ้มครองแรงงาน พ.ศ. 2541 (และที่แก้ไขเพิ่มเติม)',
+    'พ.ร.บ. แรงงานสัมพันธ์ พ.ศ. 2518',
+    'พ.ร.บ. ประกันสังคม พ.ศ. 2533',
+    'พ.ร.บ. เงินทดแทน พ.ศ. 2537',
+    'พ.ร.บ. แรงงานต่างด้าว พ.ศ. 2560',
+  ],
+  contract: [
+    'ป.พ.พ. บรรพ 2 — นิติกรรม มาตรา 149–240',
+    'ป.พ.พ. บรรพ 2 — สัญญา มาตรา 354–394',
+    'พ.ร.บ. ว่าด้วยข้อสัญญาที่ไม่เป็นธรรม พ.ศ. 2540',
+    'พ.ร.บ. คุ้มครองผู้บริโภค พ.ศ. 2522',
+  ],
+  criminal: [
+    'ประมวลกฎหมายอาญา (ป.อ.) — ฉ้อโกง มาตรา 341–348',
+    'ป.อ. — ยักยอก มาตรา 352–356',
+    'ป.อ. — ปลอมแปลงเอกสาร มาตรา 264–268',
+    'พ.ร.บ. ว่าด้วยการกระทำความผิดเกี่ยวกับคอมพิวเตอร์ พ.ศ. 2560 มาตรา 14',
+    'พ.ร.บ. ป้องกันและปราบปรามการฟอกเงิน พ.ศ. 2542',
+  ],
+  family: [
+    'ป.พ.พ. บรรพ 5 — ครอบครัว มาตรา 1435–1598/41',
+    'ป.พ.พ. บรรพ 6 — มรดก มาตรา 1599–1755',
+    'พ.ร.บ. จดทะเบียนครอบครัว พ.ศ. 2478',
+  ],
+  ip: [
+    'พ.ร.บ. ลิขสิทธิ์ พ.ศ. 2537 (แก้ไข 2558)',
+    'พ.ร.บ. เครื่องหมายการค้า พ.ศ. 2534',
+    'พ.ร.บ. สิทธิบัตร พ.ศ. 2522 (แก้ไข 2542)',
+    'พ.ร.บ. ความลับทางการค้า พ.ศ. 2545',
+  ],
+  litigation: [
+    'ประมวลกฎหมายวิธีพิจารณาความแพ่ง (ป.วิ.แพ่ง)',
+    'ประมวลกฎหมายวิธีพิจารณาความอาญา (ป.วิ.อาญา)',
+    'พ.ร.บ. อนุญาโตตุลาการ พ.ศ. 2545',
+    'พ.ร.บ. ไกล่เกลี่ยข้อพิพาท พ.ศ. 2562',
+  ],
+  finance: [
+    'พ.ร.บ. หลักทรัพย์และตลาดหลักทรัพย์ พ.ศ. 2535',
+    'พ.ร.บ. ป้องกันและปราบปรามการฟอกเงิน พ.ศ. 2542',
+    'ป.อ. มาตรา 341 (ฉ้อโกง) และมาตรา 343 (ฉ้อโกงประชาชน)',
+    'พ.ร.บ. ขายตรงและตลาดแบบตรง พ.ศ. 2545 — แชร์ลูกโซ่',
+    'พ.ร.บ. ว่าด้วยการกระทำผิดคอมพิวเตอร์ พ.ศ. 2560',
+  ],
+  immigration: [
+    'พ.ร.บ. คนเข้าเมือง พ.ศ. 2522',
+    'พ.ร.บ. แรงงานต่างด้าว พ.ศ. 2560',
+    'ระเบียบกรมการกงสุล ว่าด้วยการตรวจลงตรา (Visa)',
+  ],
+  environment: [
+    'พ.ร.บ. ส่งเสริมและรักษาคุณภาพสิ่งแวดล้อมแห่งชาติ พ.ศ. 2535',
+    'พ.ร.บ. ผังเมือง พ.ศ. 2562',
+    'พ.ร.บ. ควบคุมอาคาร พ.ศ. 2522',
+    'พ.ร.บ. โรงงาน พ.ศ. 2535 (แก้ไข 2562)',
+  ],
+}
+
 /* ─── Tone → visual mood ────────────────────────────────── */
 
 const TONE_VISUAL_MOOD: Record<string, string> = {
@@ -650,6 +729,28 @@ function buildContentPrompt(req: Record<string, unknown>, ragContext: string, br
   const referencesMatch = brief.match(/References:\n([\s\S]+?)(?:\n\n|$)/)
   const referencesText = referencesMatch?.[1] ?? ''
 
+  // Map selected categories → inject relevant Thai law references
+  const categoryMap: Record<string, string> = {
+    'กฎหมายบริษัท': 'corporate', 'ภาษีและบัญชี': 'tax', 'อสังหาริมทรัพย์': 'property',
+    'แรงงาน': 'labor', 'สัญญา': 'contract', 'อาญา': 'criminal',
+    'ครอบครัว/มรดก': 'family', 'ทรัพย์สินทางปัญญา': 'ip', 'คดีความ/ฟ้องร้อง': 'litigation',
+    'การเงิน/หลักทรัพย์': 'finance', 'วีซ่า/คนเข้าเมือง': 'immigration', 'สิ่งแวดล้อม/ผังเมือง': 'environment',
+  }
+  const selectedCategories = lawCategoryLine.split(',').map(s => s.trim())
+  const relevantLaws: string[] = []
+  for (const cat of selectedCategories) {
+    const key = categoryMap[cat]
+    if (key && LAW_REFERENCES[key]) relevantLaws.push(...LAW_REFERENCES[key])
+  }
+  // Also include topic-based law detection (for finance/criminal topics without explicit category)
+  const topic = String(req.topic ?? '').toLowerCase()
+  if ((topic.includes('หลอกลวง') || topic.includes('ฉ้อโกง') || topic.includes('ฟอก')) && !relevantLaws.length) {
+    relevantLaws.push(...LAW_REFERENCES.criminal, ...LAW_REFERENCES.finance)
+  }
+  const lawBlock = relevantLaws.length > 0
+    ? `\n═══ กฎหมายที่เกี่ยวข้อง (ต้องอ้างอิงในเนื้อหา) ═══\n${relevantLaws.map(l => `• ${l}`).join('\n')}`
+    : ''
+
   const isCarousel = req.content_type === 'carousel'
   const isReel = req.content_type === 'reel_script' || req.content_type === 'short_video'
 
@@ -676,6 +777,7 @@ Brand Colors: Primary ${brand.primaryColor} / Secondary ${brand.secondaryColor}
 ` : ''
 
   return `คุณเป็น content writer ผู้เชี่ยวชาญกฎหมายไทย เขียน Facebook post ที่ถูกต้องทางกฎหมาย เข้าใจง่าย และ engage ผู้อ่าน
+กฎสำคัญ: ทุก claim ทางกฎหมายต้องอ้างอิงมาตราหรือ พ.ร.บ. ที่ถูกต้องเสมอ — ห้ามระบุโทษหรือสิทธิโดยไม่มีที่มา
 ${brandBlock}
 ═══ BRIEF ═══
 Topic: ${req.topic}
@@ -688,18 +790,18 @@ Tone: ${req.tone ?? 'professional'}
 Objective: ${req.objective ?? 'ให้ความรู้'}
 ${(() => {
     const wc = targetWordCount ?? 800
-    // Thai: 1 คำ ≈ 4 chars → multiply to get minimum character target
     const minChars = wc * 4
     return `ความยาวเนื้อหา body: อย่างน้อย ${wc} คำ (≈ ${minChars} ตัวอักษรภาษาไทย)
 ⚠️ กฎเหล็ก: body ต้องมีความยาวไม่ต่ำกว่า ${minChars} ตัวอักษร — ห้ามส่งสั้นกว่านี้
-โครงสร้าง body ที่แนะนำ (เพื่อให้ได้ความยาวตามกำหนด):
+โครงสร้าง body ที่แนะนำ:
 1. บทนำ — อธิบาย topic ทำไมถึงสำคัญ (${Math.round(wc*0.15)} คำ)
-2. เนื้อหาหลัก 3-5 หัวข้อย่อย แต่ละหัวข้ออธิบายละเอียด (${Math.round(wc*0.55)} คำ)
+2. เนื้อหาหลัก 3-5 หัวข้อย่อย พร้อม อ้างอิงกฎหมาย/มาตรา (${Math.round(wc*0.55)} คำ)
 3. ตัวอย่างจริง / กรณีศึกษา (${Math.round(wc*0.15)} คำ)
 4. ข้อควรระวัง / สิ่งที่ต้องทำ (${Math.round(wc*0.1)} คำ)
 5. สรุป (${Math.round(wc*0.05)} คำ)`
   })()}
 ${doNotLine ? `ห้ามพูดถึง: ${doNotLine}` : ''}
+${lawBlock}
 
 ${blueprintText ? `═══ BLUEPRINT ═══\n${blueprintText}` : ''}
 ${referencesText ? `═══ REFERENCES ═══\n${referencesText}` : ''}
@@ -713,10 +815,11 @@ ${formatInstructions}
   "title": "ชื่อ post ที่คนจำได้",
   "hook": "ประโยคเปิด 1-2 บรรทัด ดึงดูดให้หยุดอ่าน (ห้ามเริ่มด้วย 'สวัสดี' หรือชื่อบริษัท)",
   "caption": "caption สั้น 1-2 บรรทัด สรุป value ของโพส",
-  "body": "เนื้อหาหลัก — ต้องมีความยาวตามที่กำหนด เขียนเป็น bullet points หรือ structured text ที่ละเอียด ครบถ้วน ตาม content type",
+  "body": "เนื้อหาหลัก — ต้องมีความยาวตามที่กำหนด เขียนเป็น bullet points หรือ structured text ที่ละเอียด ครบถ้วน ตาม content type พร้อมอ้างอิงกฎหมาย/มาตราที่ระบุ",
+  "legal_references": ["ป.พ.พ. มาตรา XXX — ชื่อมาตรา", "พ.ร.บ. XXX พ.ศ. XXXX มาตรา YYY"],
   "cta": "call to action ชัดเจน 1 ประโยค",
   "hashtags": "#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5",
-  "compliance_note": "ถ้ามีประเด็น legal risk ให้ระบุ (หรือ null)"
+  "compliance_note": "ข้อควรระวัง legal risk หรือข้อจำกัดของเนื้อหานี้ (ห้ามเว้นว่าง)"
 }`
 }
 
