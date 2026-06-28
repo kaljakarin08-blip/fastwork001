@@ -297,38 +297,65 @@ export async function processJob(job: Record<string, unknown>, requirement: Reco
 
   try {
     // ── Step 1: Resolve topic ─────────────────────────────────────────────
+    // Fetch URL early so it can inform topic generation if needed
+    let urlContent = ''
+    const sourceUrl = String(requirement.source_url ?? '')
+    if (sourceUrl.startsWith('http')) {
+      urlContent = await fetchUrlContent(sourceUrl)
+      console.log(`[hermes] URL fetched: ${sourceUrl.slice(0, 60)}… (${urlContent.length} chars)`)
+    }
+
     if (!requirement.topic) {
       const categoryLine = String(requirement.brief ?? '').match(/หมวดหมู่กฎหมาย: (.+)/)?.[1]?.trim() ?? ''
-      if (!categoryLine) {
+      const briefText = String(requirement.brief ?? '').slice(0, 300)
+      if (!categoryLine && !urlContent) {
         await updateJobStatus(jobId, 'failed', 'Missing topic — กรุณาใส่ Topic หรือเลือกหมวดหมู่กฎหมาย', appUrl)
         await updateReqStatus(reqId, 'failed', appUrl)
         return
       }
       await updateReqStatus(reqId, 'rag_searching', appUrl)
+
+      // Try RAG first
       const autoRes = await fetch(`${appUrl}/api/local/rag/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: categoryLine, limit: 10 }),
+        body: JSON.stringify({ query: categoryLine || briefText, limit: 10 }),
       }).catch(() => null)
       const autoNotes: Array<{ title: string; score: number }> = autoRes?.ok ? await autoRes.json() : []
-      // RAG hit → use note title; miss → fall back to category name (still a valid law topic)
-      requirement.topic = autoNotes.length > 0 ? autoNotes[0].title : categoryLine
+
+      if (autoNotes.length > 0) {
+        // RAG hit → use the most relevant note title
+        requirement.topic = autoNotes[0].title
+        console.log(`[hermes] Topic resolved (RAG): "${requirement.topic}"`)
+      } else {
+        // RAG empty → LLM generates a specific topic from category + URL context
+        const topicRaw = await llm(
+          `คุณเป็น content strategist ผู้เชี่ยวชาญกฎหมายไทยและการบัญชี
+สร้างหัวข้อ Facebook post ที่ดึงดูด เฉพาะเจาะจง และมีประโยชน์สำหรับกลุ่มเป้าหมาย SME / เจ้าของธุรกิจ
+ตอบ JSON: { "topic": "หัวข้อภาษาไทย 10-20 คำ ที่ specific ไม่ generic" }`,
+          [categoryLine && `หมวดหมู่: ${categoryLine}`, briefText && `Brief: ${briefText}`, urlContent && `เนื้อหาจาก URL:\n${urlContent.slice(0, 2000)}`]
+            .filter(Boolean).join('\n\n')
+        ).catch(() => null)
+
+        let generatedTopic = categoryLine || 'กฎหมายธุรกิจ'
+        try {
+          if (topicRaw) {
+            const parsed = JSON.parse(topicRaw)
+            if (parsed.topic) generatedTopic = parsed.topic
+          }
+        } catch { /* keep fallback */ }
+        requirement.topic = generatedTopic
+        console.log(`[hermes] Topic resolved (LLM): "${requirement.topic}"`)
+      }
+
       await fetch(`${appUrl}/api/local/requirements/${reqId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: requirement.topic }),
       }).catch(() => null)
-      console.log(`[hermes] Topic resolved (${autoNotes.length > 0 ? 'RAG' : 'category'}): "${requirement.topic}"`)
     }
 
-    // ── Step 2: Fetch URL content (if provided) ───────────────────────────
-    let urlContent = ''
-    const sourceUrl = String(requirement.source_url ?? '')
-    if (sourceUrl.startsWith('http')) {
-      urlContent = await fetchUrlContent(sourceUrl)
-    }
-
-    // ── Step 3: Topic guard + layout advisor ──────────────────────────────
+    // ── Step 2: Topic guard + layout advisor ──────────────────────────────
     // If topic clearly contains Thai law keywords → skip LLM guard entirely (saves API call)
     // Otherwise → ask LLM to validate + suggest layout
     const topic = String(requirement.topic)
@@ -376,7 +403,7 @@ ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
     const layoutSpec = LAYOUT_SPEC[suggestedLayoutKey] ?? LAYOUT_SPEC[DEFAULT_LAYOUT]
     console.log(`[hermes] Layout: ${suggestedLayoutKey} — ${guardResult.layout_reason ?? ''}`)
 
-    // Step 4: RAG Search
+    // ── Step 3: RAG Search ────────────────────────────────────────────────
     await updateReqStatus(reqId, 'rag_searching', appUrl)
     const ragRes = await fetch(`${appUrl}/api/local/rag/search`, {
       method: 'POST',
@@ -398,7 +425,7 @@ ${urlContent ? `\nURL Content (ย่อ):\n${urlContent.slice(0, 800)}` : ''}`
       console.log(`[hermes] RAG: ไม่พบข้อมูลใน vault — generate โดยไม่มี RAG context`)
     }
 
-    // Step 4: Generate Content
+    // ── Step 4: Generate Content ──────────────────────────────────────────
     await updateReqStatus(reqId, 'content_generating', appUrl)
     // Topic has already passed the guard above — content LLM must generate, not reject
     const contentSystemPrompt = brand.systemPrompt ||
@@ -451,7 +478,7 @@ ${content.body}
       console.log(`[hermes] Final body: ${finalChars}/${minChars} chars (${Math.round(finalChars/minChars*100)}%)`)
     }
 
-    // Step 5: Generate Image Prompt
+    // ── Step 5: Generate Image Prompt ────────────────────────────────────
     await updateReqStatus(reqId, 'image_prompt_generating', appUrl)
     let creativeProfile: Record<string, unknown> | null = null
     if (requirement.creative_profile_id) {
@@ -487,7 +514,7 @@ ${content.body}
       imagePrompt = { dalle_prompt: imagePromptRaw.slice(0, 4000) }
     }
 
-    // Step 5: Video Brief (optional)
+    // ── Step 5b: Video Brief (optional) ──────────────────────────────────
     let videoPrompt: Record<string, unknown> | undefined
     if (requirement.video_create === 1) {
       await updateReqStatus(reqId, 'video_prompt_generating', appUrl)
@@ -498,7 +525,7 @@ ${content.body}
       try { videoPrompt = JSON.parse(videoRaw) } catch { videoPrompt = { script: videoRaw } }
     }
 
-    // Step 5.5: Generate actual image via DALL-E 3 (if not text-only layout)
+    // ── Step 6: Generate Image via DALL-E 3 ──────────────────────────────
     let generatedImageUrl: string | null = null
     const layout = suggestedLayoutKey
     if (layout !== 'text_only' && imagePrompt.dalle_prompt) {
@@ -512,7 +539,7 @@ ${content.body}
       }
     }
 
-    // Step 6: Save Output
+    // ── Step 7: Save Output ───────────────────────────────────────────────
     const ragSources = sources.map((s, i) => ({
       note_path: s.path ?? '',
       note_title: s.title ?? '',
