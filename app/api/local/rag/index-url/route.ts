@@ -85,8 +85,15 @@ export async function POST(req: NextRequest) {
     const res = await fetch(fetchUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LawAIBot/1.0)' }, redirect: 'follow' })
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
 
-    const raw = await res.text()
     const contentType = res.headers.get('content-type') ?? ''
+
+    // PDF ไม่สามารถ extract text ได้โดยตรง — แจ้ง error ชัดเจน
+    const isPdf = contentType.includes('application/pdf') || fetchUrl.toLowerCase().endsWith('.pdf')
+    if (isPdf) {
+      throw new Error('ไม่รองรับไฟล์ PDF โดยตรง — กรุณาใช้ URL ของหน้าเว็บ HTML แทน หรือ copy เนื้อหาไปวางใน Google Doc แล้วใส่ link นั้น')
+    }
+
+    const raw = await res.text()
 
     let text: string
     let title: string
