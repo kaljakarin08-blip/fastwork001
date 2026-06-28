@@ -1,25 +1,11 @@
 /**
- * PDF text extraction using pdfjs-dist (pure JS, works on Vercel serverless)
+ * PDF text extraction using unpdf (serverless-safe, no worker required)
+ * https://github.com/unjs/unpdf
  */
 
 export async function extractPdfText(buffer: Buffer | Uint8Array): Promise<string> {
-  // Dynamic import to avoid issues with Next.js edge runtime
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs' as string)
-
+  const { extractText } = await import('unpdf')
   const data = buffer instanceof Buffer ? new Uint8Array(buffer) : buffer
-  const doc = await (pdfjsLib as any).getDocument({ data, useWorkerFetch: false, isEvalSupported: false }).promise
-
-  const pageTexts: string[] = []
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i)
-    const content = await page.getTextContent()
-    const pageText = content.items
-      .map((item: any) => ('str' in item ? item.str : ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (pageText.length > 10) pageTexts.push(pageText)
-  }
-
-  return pageTexts.join('\n\n').trim()
+  const { text } = await extractText(data, { mergePages: true })
+  return text?.trim() ?? ''
 }
